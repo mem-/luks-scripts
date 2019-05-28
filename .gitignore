@@ -1,0 +1,12 @@
+## Classic editor backup files
+*~
+*#
+.#*
+
+## Classic config files and similar
+.gitconfig
+.bash*
+
+## Files used by 'direnv', see https://direnv.net/
+.env
+.envrc
