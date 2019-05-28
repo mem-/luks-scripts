@@ -1,0 +1,8 @@
+# this udev file should be used with udev version 188 and newer
+ACTION!="add|change", GOTO="yubikey_end"
+
+# Yubico YubiKey
+# idProduct = 0010 is for the realy old YubiKeys
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1050", ATTRS{idProduct}=="0010|0113|0114|0115|0116|0120|0200|0402|0403|0406|0407|0410", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+
+LABEL="yubikey_end"
