@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 1.0.2 Copyright (c) Magnus (Mem) Sandberg 2019
+# Version 1.1 Copyright (c) Magnus (Mem) Sandberg 2019
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -128,33 +128,35 @@ mode. If someone can access your YubiKey just for a few seconds it is easy to
 copy the static password from the YubiKey. Even if the LUKS password is
 combined with a manually entered passphrase followed by the YubiKey password,
 the individual that at some point copied your YubiKey now only need to see
-when you enter the manual part of the password to have all parts of the passphrase
-to unlock your LUKS volume without you knowing.
+when you enter the manual part of the password to have all parts of
+the LUKS passphrase to unlock your LUKS volume without you knowing.
 This weakness is mainly relevant for encypted boot disks, if the individual
-can boot your computer without you knowing. For encrypted LUKS images the individual
-has to have access to your computer in a way to get access to the LUKS image file.
+can boot your computer without you knowing. For encrypted LUKS images
+the individual has to have access to your computer in a way to get access to
+the LUKS image file.
 
 You will first be asked to set up a static password or just skip to the
 Challenge-Response setup. If you set up a static password you can decide to
-manually enter a password or let the script generate a random password for you with
-a length you decide. You will also have the option to print out the password to
-store as backup at a secure location.
+manually enter a password or let the script generate a random password for you
+with a length you decide. You will also have the option to print out
+the static password to store as backup at a secure location.
 
-You don't need to setup a static password if using Challenge-Response, but it is
-recommended to have a long random password as last resort if you loose your YubiKey
-or if the YubiKey breaks.
-The Challenge-Response is optional but recommended as static passwords is weak as
-easy to remember passwords are easy to guess or break.
+You don't need to setup a static password if using Challenge-Response, but it
+is recommended to have a long random password as last resort if you loose your
+YubiKey or if the YubiKey breaks.
+The Challenge-Response is optional but recommended as static passwords often
+are weak, as easy-to-remember passwords also are easy to guess or break.
 
-To use YubiKey with Challenge-Response make sure you setup your YubiKey before continuing.
-To setup Challenge-Response make sure your computer has needed 'udev' config to allow
-user access to the YubiKey. Read the man-page for the 'ykchalresp' command to setup
-and test your YubiKey. My recommended setup command is:
+To use YubiKey with Challenge-Response make sure you've setup your YubiKey
+before continuing. To setup Challenge-Response make sure your computer has
+needed 'udev' config to allow user access to the YubiKey. Read the man-page
+for the 'ykchalresp' command to setup and test your YubiKey. My recommended
+setup command is:
 
 ykpersonalize -v -2 -ochal-resp -ochal-hmac -ohmac-lt64 -oserial-api-visible -ochal-btn-trig
 
-I use '-ochal-btn-trig' prevent other scripts or users at the same computer use the 
-YubiKey without me pressing the YubiKey button.
+I use '-ochal-btn-trig' to prevent other scripts or users at the same
+computer to use the YubiKey without the need to press the YubiKey button.
 
 _EOT
 
@@ -224,6 +226,13 @@ else
 	dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=$R 2>&1 | egrep -v ' records | copied, '
     fi
 fi
+
+echo
+echo "Select preferred mount-name, usually mounted under /media/$USER/, like /media/$USER/$volume"
+echo "The mount-name can be changed by root with"
+echo "'tune2fs -L <new-name> <dev>' where <dev> usually is something like /dev/dm-X."
+read -p "Enter mount-name (default: $volume): " label
+[ -z $label ] && label=$volume
 
 echo
 echo "Preparing for password generation and optional print-out."
@@ -526,7 +535,7 @@ echo
 
 echo "Creating filesystem in LUKS volume."
 echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-R=$( $SUCMD "mke2fs -t ext4 -L $volume $fsdev 2>&1" ) ; RC=$?
+R=$( $SUCMD "mke2fs -t ext4 -L $label $fsdev 2>&1" ) ; RC=$?
 if [ $RC -gt 0 ] ; then
     echo -e "\nSomething went wrong with 'mke2fs':"
     echo "Output from mke2fs (newlines stipped off):"
