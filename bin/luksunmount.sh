@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Version 1.2 Copyright (c) Magnus (Mem) Sandberg 2019
+# Version 1.3 Copyright (c) Magnus (Mem) Sandberg 2019
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -104,21 +104,33 @@ R=$( df --output=target ${fsdev} ) ; RC=$?
 filesys=$( echo $R | awk '{ print $3 }' )
 if [ $RC -eq 0 ] && [ "x$filesys" != "x/dev" ] ; then
     [ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${filesys}, un-mounting."
-    udisksctl unmount -b $fsdev
+    R=$( udisksctl unmount -b $fsdev 2>&1 ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "Unmount problems: $R"
+	exit 1
+    fi
 else
     echo "Filesystem not mounted."
 fi
 [ $DEBUG -gt 0 ] &&  echo "Locking filesystem"
-udisksctl lock -b $luksdev
+R=$( udisksctl lock -b $luksdev 2>&1 ) ; RC=$?
+if [ $RC -gt 0 ] ; then
+    echo "Lock problems: $R"
+    exit 1
+fi
 if [ $PHYSDEV -eq 0 ] ; then
     echo "Tear down loop device."
     udisksctl loop-delete -b $loopdev
 else
-    read -p "Power of $luksdev (y/N): " R
+    read -p "Power off $luksdev (y/N): " R
     case $R in
 	y|Y|[yY][eE][sS])
 	    [ $DEBUG -gt 0 ] && echo "Powering off $luksdev."
-	    udisksctl power-off -b $luksdev
+	    R=$( udisksctl power-off -b $luksdev ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "Power off problems: $R"
+		exit 1
+	    fi
 	    ;;
 	*)
 	;;
