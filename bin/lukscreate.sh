@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 1.1 Copyright (c) Magnus (Mem) Sandberg 2019
+# Version 1.2 Copyright (c) Magnus (Mem) Sandberg 2019
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -25,6 +25,7 @@ IMAGEPATH="$HOME/.images"
 CONFIG=$HOME/.config/luks-mgmt.conf
 DEBUG=0
 PRINTOUT=0
+PHYSDEV=0
 
 [ -f $CONFIG ] && . $CONFIG
 
@@ -37,13 +38,16 @@ if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     echo
     echo "Usage: $0 [-h] [-v] <volume>"
     echo
-    echo " -h      : show this help text"
-    echo " -v      : verbose mode"
+    echo " -h       : Show this help text"
+    echo " -v       : Verbose mode"
     echo
-    echo "<volume> : the volume filename to be created, with or without '.img' extension"
-    echo "         : volume will be created in ${IMAGEPATH}/"
-    echo "         :"
-    echo "         :To change path, edit ${CONFIG}"
+    echo " <volume> : The volume filename to be created, with or without '.img' extension"
+    echo "          : volume will be created in ${IMAGEPATH}/"
+    echo "          :"
+    echo "          : The volume can also be a physical device, like USB stick,"
+    echo "          : by entering the device path. Example: /dev/sdb1"
+    echo "          :"
+    echo "          :To change path, edit ${CONFIG}"
     echo
     exit
 fi
@@ -68,10 +72,35 @@ cleanup_tmp () {
 }
 
 volume=$1
-volume=$( echo $volume | sed -e 's/\.img$//' )
-if [ -f ${IMAGEPATH}/${volume}.img ] ; then
-    echo "Volume ${IMAGEPATH}/${volume}.img already exists."
+if echo $volume | grep "\.\." >/dev/null ; then
+    echo "Dangerous filename including '..': $volume"
     exit 1
+fi
+if echo $volume | grep "\./" >/dev/null ; then
+    echo "Un-supported filename including './': $volume"
+    exit 1
+fi
+if echo $volume | grep "^/dev/" >/dev/null ; then
+    PHYSDEV=1
+    if [ ! -b $volume ] ; then
+	echo "Device ${volume} doesn't exists or is not a block device."
+	exit 1
+    fi
+else
+    if echo $volume | grep "/" >/dev/null ; then
+	echo "Un-supported filename including '/': $volume"
+	echo "No path under or outside $IMAGEPATH supported!"
+	exit 1
+    fi
+    if echo $volume | grep " " >/dev/null ; then
+	echo "Un-supported filename including ' ' (space char): $volume"
+	exit 1
+    fi
+    volume=$( echo $volume | sed -e 's/\.img$//' )
+    if [ -f ${IMAGEPATH}/${volume}.img ] ; then
+	echo "Volume ${IMAGEPATH}/${volume}.img already exists."
+	exit 1
+    fi
 fi
 
 if which shred >/dev/null 2>&1 ; then
@@ -100,7 +129,7 @@ echo "\$SLOT=\"${SLOT}\"                 ; LUKS keyslot to store challenge-respo
 echo "\$YKSLOT=\"${YKSLOT}\"              ; YubiKey slot used for challenge-response"
 echo "\$SPARSE=\"${SPARSE}\"              ; create sparse image or regular image file"
 echo "\$SUCMD=\"${SUCMD}\"   ; how to become root for some commands"
-echo "\$IMAGEPATH=\"${IMAGEPATH}\""
+[ $PHYSDEV -eq 0 ] && echo "\$IMAGEPATH=\"${IMAGEPATH}\""
 echo
 echo "To change values, edit ${CONFIG}"
 echo "NOTICE: Changing values may affect mounting of already created volumes."
@@ -155,8 +184,9 @@ setup command is:
 
 ykpersonalize -v -2 -ochal-resp -ochal-hmac -ohmac-lt64 -oserial-api-visible -ochal-btn-trig
 
-I use '-ochal-btn-trig' to prevent other scripts or users at the same
-computer to use the YubiKey without the need to press the YubiKey button.
+I use '-ochal-btn-trig' to prevent other scripts or (remote) users logged in
+at the same computer to use the YubiKey without the need to press the
+YubiKey button.
 
 _EOT
 
@@ -173,66 +203,118 @@ case $R in
 esac
 echo
 
-echo "Setting up LUKS volume in image file ${IMAGEPATH}/${volume}.img"
-read -p "Enter image size in 'dd' format (512M, 1G, etc): " R
-if [ $SPARSE -gt 0 ] ; then
-    # Using 'if [[ ]]' as case statements doesn't do regex
-    if [[ "$R" =~  ^[0-9]+$ ]] ||
-      [[ "$R" =~ ^[0-9]+c$ ]] ||
-      [[ "$R" =~ ^[0-9]+w$ ]] ||
-      [[ "$R" =~ ^[0-9]+b$ ]] ||
-      [[ "$R" =~ ^[0-9]+[kMGTPEZY]B$ ]] ||
-      [[ "$R" =~ ^[0-9]+[KMGTPEZY]$ ]] ; then
-	BS=1
-    else
-	echo "Unknown size value for 'dd': $R"
-	cleanup_tmp
-	exit 1
-    fi
-    [ $DEBUG -gt 0 ] && echo "Block size for dd: $BS"
-    [ $DEBUG -gt 0 ] && echo "Number of blocks to create: $R"
+if [ $PHYSDEV -eq 0 ] ; then
+    echo "Setting up LUKS volume in image file ${IMAGEPATH}/${volume}.img"
+    read -p "Enter image size in 'dd' format (512M, 1G, etc): " R
+    if [ $SPARSE -gt 0 ] ; then
+	# Using 'if [[ ]]' as case statements doesn't do regex
+	if [[ "$R" =~  ^[0-9]+$ ]] ||
+	       [[ "$R" =~ ^[0-9]+c$ ]] ||
+	       [[ "$R" =~ ^[0-9]+w$ ]] ||
+	       [[ "$R" =~ ^[0-9]+b$ ]] ||
+	       [[ "$R" =~ ^[0-9]+[kMGTPEZY]B$ ]] ||
+	       [[ "$R" =~ ^[0-9]+[KMGTPEZY]$ ]] ; then
+	    BS=1
+	else
+	    echo "Unknown size value for 'dd': $R"
+	    cleanup_tmp
+	    exit 1
+	fi
+	[ $DEBUG -gt 0 ] && echo "Block size for dd: $BS"
+	[ $DEBUG -gt 0 ] && echo "Number of blocks to create: $R"
 
-    if [ $DEBUG -gt 0 ] ; then
-	dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$R
+	if [ $DEBUG -gt 0 ] ; then
+	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$R
+	else
+	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$R 2>&1 | egrep -v ' records | copied, '
+	fi
     else
-	dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$R 2>&1 | egrep -v ' records | copied, '
+	# Using 'if [[ ]]' as case statements doesn't do regex
+	if [[ "$R" =~  ^[0-9]+$ ]] ||
+	  [[ "$R" =~ ^[0-9]+c$ ]] ||
+	  [[ "$R" =~ ^[0-9]+w$ ]] ; then
+	    BS=1
+	elif [[ "$R" =~ ^[0-9]+b$ ]] ; then
+	    BS=512
+	    R=$( echo $R | tr -d 'b' )
+	elif [[ "$R" =~ ^[0-9]+[kMGTPEZY]B$ ]] ; then
+	    BS=1000
+	    R=$( echo $R | sed -e 's/kB$//' | tr 'MGTPEZY' 'kMGTPEZ' )
+	elif [[ "$R" =~ ^[0-9]+[KMGTPEZY]$ ]] ; then
+	    BS=1024
+	    R=$( echo $R | tr -d 'K' | tr 'MGTPEZY' 'KMGTPEZ' )
+	else
+	    echo "Unknown size value for 'dd': $R"
+	    cleanup_tmp
+	    exit 1
+	fi
+	[ $DEBUG -gt 0 ] && echo "Block size for dd: $BS"
+	[ $DEBUG -gt 0 ] && echo "Number of blocks to create: $R"
+
+	if [ $DEBUG -gt 0 ] ; then
+	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=$R
+	else
+	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=$R 2>&1 | egrep -v ' records | copied, '
+	fi
     fi
 else
-    # Using 'if [[ ]]' as case statements doesn't do regex
-    if [[ "$R" =~  ^[0-9]+$ ]] ||
-      [[ "$R" =~ ^[0-9]+c$ ]] ||
-      [[ "$R" =~ ^[0-9]+w$ ]] ; then
-	BS=1
-    elif [[ "$R" =~ ^[0-9]+b$ ]] ; then
-	BS=512
-	R=$( echo $R | tr -d 'b' )
-    elif [[ "$R" =~ ^[0-9]+[kMGTPEZY]B$ ]] ; then
-	BS=1000
-	R=$( echo $R | sed -e 's/kB$//' | tr 'MGTPEZY' 'kMGTPEZ' )
-    elif [[ "$R" =~ ^[0-9]+[KMGTPEZY]$ ]] ; then
-	BS=1024
-	R=$( echo $R | tr -d 'K' | tr 'MGTPEZY' 'KMGTPEZ' )
-    else
-	echo "Unknown size value for 'dd': $R"
-	cleanup_tmp
-	exit 1
-    fi
-    [ $DEBUG -gt 0 ] && echo "Block size for dd: $BS"
-    [ $DEBUG -gt 0 ] && echo "Number of blocks to create: $R"
+    echo
+    echo " !!!"
+    echo " !!! ALL DATA ON DEVICE $volume WILL BE ERASED"
+    echo " !!!"
+    echo " !!! Enter 'Yes' in uppercase to continue."
+    echo " !!!"
 
-    if [ $DEBUG -gt 0 ] ; then
-	dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=$R
-    else
-	dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=$R 2>&1 | egrep -v ' records | copied, '
-    fi
+    read -p "Continue: " R
+    case $R in
+	YES)
+	    [ $DEBUG -gt 0 ] && echo "Continuing."
+	    ;;
+	*)
+	    echo "You didn't answer 'YES', exiting."
+	    cleanup_tmp
+	    exit
+	    ;;
+    esac
+
+    echo
+    echo " >>>"
+    echo " >>> Really overwrite $volume ?"
+    echo " >>>"
+    echo " >>> Enter 'Yes' in uppercase once more to continue."
+    echo " >>>"
+
+    read -p "Continue: " R
+    case $R in
+	YES)
+	    [ $DEBUG -gt 0 ] && echo "Continuing."
+	    ;;
+	*)
+	    echo "You didn't answer 'YES', exiting."
+	    cleanup_tmp
+	    exit
+	    ;;
+    esac
+    echo
 fi
 
-echo
-echo "Select preferred mount-name, usually mounted under /media/$USER/, like /media/$USER/$volume"
-echo "The mount-name can be changed by root with"
-echo "'tune2fs -L <new-name> <dev>' where <dev> usually is something like /dev/dm-X."
-read -p "Enter mount-name (default: $volume): " label
-[ -z $label ] && label=$volume
+if [ $PHYSDEV -eq 0 ] ; then
+    echo
+    echo "Select preferred mount-name, usually mounted under /media/$USER/,"
+    echo "like /media/$USER/$volume"
+    echo "The mount-name can be changed by root with 'tune2fs -L <new-name> <dev>',"
+    echo " where <dev> usually is something like /dev/dm-X."
+    read -p "Enter mount-name (default: $volume): " label
+    [ -z $label ] && label=$volume
+else
+    echo
+    echo "Select preferred mount-name, usually mounted under /media/$USER/,"
+    echo "like /media/$USER/USB-encrypted"
+    echo "The mount-name can be changed by root with 'tune2fs -L <new-name> <dev>',"
+    echo "where <dev> usually is something like $volume."
+    read -p "Enter mount-name (default: USB-encrypted): " label
+    [ -z $label ] && label="USB-encrypted"
+fi
 
 echo
 echo "Preparing for password generation and optional print-out."
@@ -253,7 +335,11 @@ case $R in
 		PRINTOUT=1
 		echo "Date: $(date +%Y-%m-%d)" > $tempdir/file.txt
 		chmod 600 $tempdir/file.txt
-		echo "LUKS image: $(hostname -s):${IMAGEPATH}/${volume}.img" >> $tempdir/file.txt
+		if [ $PHYSDEV -eq 0 ] ; then
+		    echo "LUKS image: $(hostname -s):${IMAGEPATH}/${volume}.img" >> $tempdir/file.txt
+		else
+		    echo "LUKS image: $(hostname -s):${volume} (Labeled: ${label})" >> $tempdir/file.txt
+		fi
 		echo "" >> $tempdir/file.txt
 		;;
 	esac
@@ -272,7 +358,7 @@ case $R in
 		    if [ "$PW1" != "$PW2" ]; then
 			echo "Passwords do not match, exiting."
 			unset PW1 ; unset PW2
-			rm ${IMAGEPATH}/${volume}.img
+			[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 			cleanup_tmp
 			exit 1
 		    fi
@@ -285,7 +371,7 @@ case $R in
 		    if [ "$PW1" != "$PW2" ]; then
 			echo "Passwords do not match, exiting."
 			unset PW1 ; unset PW2
-			rm ${IMAGEPATH}/${volume}.img
+			[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 			cleanup_tmp
 			exit 1
 		    fi
@@ -293,7 +379,7 @@ case $R in
 		    if [ ${#PW1} -lt 10 ] || [ ${#PW1} -gt 99 ] ; then
 			echo "Wrong length again, exiting."
 			unset PW1
-			rm ${IMAGEPATH}/${volume}.img
+			[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 			cleanup_tmp
 			exit 1
 		    fi
@@ -311,7 +397,7 @@ case $R in
 			;;
 		    *)
 			echo "Wrong value: $R"
-			rm ${IMAGEPATH}/${volume}.img
+			[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 			cleanup_tmp
 			exit 1
 			;;
@@ -353,7 +439,7 @@ case $R in
 			if [ $RC -gt 0 ] ; then
 			    echo "Unknown printer: ${printer}, exiting."
 			    unset PW1
-			    rm ${IMAGEPATH}/${volume}.img
+			    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 			    cleanup_tmp
 			    exit 1
 			fi
@@ -396,7 +482,7 @@ case $R in
 	CHALRESP=0
 	if [ $STATICPW -eq 0 ] ; then
 	    echo "At least one unlock method is needed, exiting."
-	    rm ${IMAGEPATH}/${volume}.img
+	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 	    cleanup_tmp
 	    exit 1
 	fi
@@ -405,7 +491,7 @@ case $R in
 	if ! which ykchalresp >/dev/null 2>&1 ; then
 	    echo "This script needs 'ykchalresp' command (Debian package: yubikey-personalization), exiting."
 	    unset PW1
-	    rm ${IMAGEPATH}/${volume}.img
+	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 	    cleanup_tmp
 	    exit 1
 	fi
@@ -421,7 +507,7 @@ case $R in
 	    if [ "$pph1" != "$pph2" ]; then
 		echo "Challenges do not match, exiting."
 		unset pph1 ; unset pph2 ; unset PW1
-		rm ${IMAGEPATH}/${volume}.img
+		[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 		cleanup_tmp
 		exit 1
 	    fi
@@ -434,7 +520,7 @@ case $R in
 	    if [ "$pph1" != "$pph2" ]; then
 		echo "Challenges do not match, exiting."
 		unset pph1 ; unset pph2 ; unset PW1
-		rm ${IMAGEPATH}/${volume}.img
+		[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 		cleanup_tmp
 		exit 1
 	    fi
@@ -442,7 +528,7 @@ case $R in
 	    if [ ${#pph1} -lt 10 ] ; then
 		echo "Wrong length again, exiting."
 		unset pph1 ; unset PW1
-		rm ${IMAGEPATH}/${volume}.img
+		[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 		cleanup_tmp
 		exit 1
 	    fi
@@ -456,7 +542,7 @@ case $R in
 	if [ -z "$Resp" ] ; then
 	    echo "Yubikey not available, wrong config (slot ${YKSLOT}) or timed out waiting for button press."
 	    unset pph1 ; unset Resp ; unset PW1
-	    rm ${IMAGEPATH}/${volume}.img
+	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 	    cleanup_tmp
 	    exit 1
 	fi
@@ -469,25 +555,34 @@ case $R in
 	;;
 esac
 
-[ $DEBUG -gt 0 ] && echo -e "\nSetting up loopback device"
-R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
-[ $RC -gt 0 ] && exit $RC
-loopdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
-[ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}."
+if [ $PHYSDEV -eq 0 ] ; then
+    [ $DEBUG -gt 0 ] && echo -e "\nSetting up loopback device"
+    R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
+    [ $RC -gt 0 ] && exit $RC
+    loopdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
+    [ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}."
+    luksdev=$loopdev
+    lukslabel="luks_img-$volume"
+else
+    luksdev=$volume
+    lukslabel="luks-$label"
+fi
 
 echo -e "\nCreating LUKS volume."
 if [ $STATICPW -gt 0 ] ; then
     echo "$PW1" > $tempdir/args.txt
     echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
     # The first arg to 'printf' should be without '\n' otherwise the password will include NEWLINE
-    $SUCMD "printf '%s' \"$( cat $tempdir/args.txt )\" | cryptsetup --label luks_img-$volume --key-file - luksFormat $loopdev" ; RC=$?
+    $SUCMD "printf '%s' \"$( cat $tempdir/args.txt )\" | cryptsetup --label $lukslabel --key-file - luksFormat $luksdev" ; RC=$?
     [ $RC -eq 1 ] && echo -n "Something went wrong, did you miss to write 'yes' in uppercase?"
     if [ $RC -gt 0 ] ; then
 	echo -e "\nCould not create LUKS volume, exiting."
-	[ $DEBUG -gt 0 ] && echo "Tear down loop device."
-	udisksctl loop-delete -b $loopdev
 	unset Resp ; unset PW1
-	rm ${IMAGEPATH}/${volume}.img
+	if [ $PHYSDEV -eq 0 ] ; then
+	    [ $DEBUG -gt 0 ] && echo "Tear down loop device."
+	    udisksctl loop-delete -b $loopdev
+	    rm ${IMAGEPATH}/${volume}.img
+	fi
 	cleanup_tmp
 	exit $RC
     fi
@@ -497,33 +592,35 @@ if [ $STATICPW -gt 0 ] ; then
 	echo "$Resp" >> $tempdir/args.txt
 	if [ ! -z $SLOT ] && [ $SLOT -gt 0 ] ; then
 	    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-	    $SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup --key-slot=$SLOT luksAddKey $loopdev" ; RC=$?
+	    $SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup --key-slot=$SLOT luksAddKey $luksdev" ; RC=$?
 	else
 	    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-	    $SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup luksAddKey $loopdev" ; RC=$?
+	    $SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup luksAddKey $luksdev" ; RC=$?
 	fi
     fi
     [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
-    R=$( (sleep 2; echo "$PW1"; sleep 5) | socat - EXEC:"udisksctl unlock -b $loopdev",pty,setsid,ctty ) ; RC=$?
+    R=$( (sleep 2; echo "$PW1"; sleep 5) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
     R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
     unset PW1 ; unset Resp
 else
     echo "$Resp" > $tempdir/args.txt
     echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
     # The first arg to 'printf' should be without '\n' otherwise the password will include NEWLINE
-    $SUCMD "printf '%s' \"$( cat $tempdir/args.txt )\" | cryptsetup --label luks_img-$volume --key-file - luksFormat $loopdev" ; RC=$?
+    $SUCMD "printf '%s' \"$( cat $tempdir/args.txt )\" | cryptsetup --label $lukslabel --key-file - luksFormat $luksdev" ; RC=$?
     [ $RC -eq 1 ] && echo -n "Something went wrong, did you miss to write 'yes' in uppercase?"
     if [ $RC -gt 0 ] ; then
 	echo -e "\nCould not create LUKS volume, exiting."
-	[ $DEBUG -gt 0 ] && echo "Tear down loop device."
-	udisksctl loop-delete -b $loopdev
 	unset Resp
-	rm ${IMAGEPATH}/${volume}.img
+	if [ $PHYSDEV -eq 0 ] ; then
+	    [ $DEBUG -gt 0 ] && echo "Tear down loop device."
+	    udisksctl loop-delete -b $loopdev
+	    rm ${IMAGEPATH}/${volume}.img
+	fi
 	cleanup_tmp
 	exit $RC
     fi
     [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
-    R=$( (sleep 2; echo "$Resp"; sleep 5) | socat - EXEC:"udisksctl unlock -b $loopdev",pty,setsid,ctty ) ; RC=$?
+    R=$( (sleep 2; echo "$Resp"; sleep 5) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
     R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
     unset Resp
 fi
@@ -541,14 +638,18 @@ if [ $RC -gt 0 ] ; then
     echo "Output from mke2fs (newlines stipped off):"
     echo $R
     echo
-    udisksctl lock -b $loopdev
-    udisksctl loop-delete -b $loopdev
+    if [ $PHYSDEV -eq 0 ] ; then
+	udisksctl lock -b $luksdev
+	udisksctl loop-delete -b $loopdev
+    fi
     cleanup_tmp
     exit $RC
 fi
 echo    
 
 echo "Mounting filesystem."
+[ $DEBUG -gt 0 ] && echo "Sleeping 2 seconds to make device to settle"
+sleep 2
 R=$( udisksctl mount -b $fsdev ) ; RC=$?
 [ $RC -gt 0 ] && exit $RC
 filesys=$( echo $R | sed -e 's/.* at //' | sed -e 's/\.$//' )
