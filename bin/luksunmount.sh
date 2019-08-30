@@ -34,7 +34,7 @@ if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     echo
     echo " The script can also unmount devices like USB sticks."
     echo " Mounted LUKS devices :"
-    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep '@@' | grep -v "^loop" | awk '{ print "   /dev/" $1 }'
+    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep '@@' | grep -v "^loop" | awk '{ print "   /dev/" $1 }' | egrep -v "${EXCLUDEDEVS}"
 
     echo
     exit
