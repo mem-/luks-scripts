@@ -21,7 +21,7 @@ _luksunmount () {
     CONFIG=$HOME/.config/luks-mgmt.conf
     [ -f $CONFIG ] && . $CONFIG
     LOOPDEVS=$( /usr/sbin/losetup -l | grep $IMAGEPATH | awk '{ print $6 }' | sed -e 's#.*/##' | sed -e 's/\.img$//' )
-    PHYSDEVS=$( lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep '@@' | grep -v "^loop" | awk '{ print "/dev/" $1 }' )
+    PHYSDEVS=$( lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep '@@' | grep -v "^loop" | awk '{ print "/dev/" $1 }' | egrep -v "${EXCLUDEDEVS}" )
 
     COMPREPLY=($(compgen -W "$( echo "$LOOPDEVS $PHYSDEVS" )" "${COMP_WORDS[COMP_CWORD]}"))
 }
