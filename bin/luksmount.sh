@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use read that has silent mode to not echo passphrase
 #
-# Version 1.1 Copyright (c) Magnus (Mem) Sandberg 2019
+# Version 1.3 Copyright (c) Magnus (Mem) Sandberg 2019
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -18,6 +18,7 @@ YKSLOT="2"
 IMAGEPATH="$HOME/.images"
 CONFIG=$HOME/.config/luks-mgmt.conf
 DEBUG=0
+PHYSDEV=0
 
 [ -f $CONFIG ] && . $CONFIG
 
@@ -32,32 +33,68 @@ fi
 if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     echo "Usage: $0 [-h] [-v] <volume>"
     echo
-    echo " -h      : show this help text"
-    echo " -v      : verbose mode"
+    echo " -h      : Show this help text"
+    echo " -v      : Verbose mode"
     echo
     echo " Volumes :"
     ls -1 ${IMAGEPATH}/*.img | sed -e 's#.*/#   #' -e 's#\..*$##'
+    echo
+    echo " The script can also mount devices like USB sticks."
+    echo " Available LUKS devices :"
+    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep -v '@@' | grep -v "^loop" | awk '{ print "   /dev/" $1 }'
     echo
     exit
 fi
 
 volume=$1
-if [ ! -f ${IMAGEPATH}/${volume}.img ] ; then
-    echo "Could not find volume ${volume}"
+if echo $volume | grep "\.\." >/dev/null ; then
+    echo "Dangerous filename including '..': $volume"
     exit 1
 fi
-R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
-if [ $RC -eq 0 ] ; then
-    loopdev=$( echo $R | awk '{ print $1 }' )
-    [ $DEBUG -gt 0 ] && echo "Image $volume already mapped to ${loopdev}."
+if echo $volume | grep "\./" >/dev/null ; then
+    echo "Un-supported filename including './': $volume"
+    exit 1
+fi
+if echo $volume | grep "^/dev/" >/dev/null ; then
+    PHYSDEV=1
+    if [ ! -b $volume ] ; then
+	echo "Device ${volume} doesn't exists or is not a block device."
+	exit 1
+    fi
 else
-    R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
-    [ $RC -gt 0 ] && exit $RC
-    loopdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
-    [ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}."
+    if echo $volume | grep "/" >/dev/null ; then
+	echo "Un-supported filename including '/': $volume"
+	echo "No path under or outside $IMAGEPATH supported!"
+	exit 1
+    fi
+    if echo $volume | grep " " >/dev/null ; then
+	echo "Un-supported filename including ' ' (space char): $volume"
+	exit 1
+    fi
+    volume=$( echo $volume | sed -e 's/\.img$//' )
+    if [ ! -f ${IMAGEPATH}/${volume}.img ] ; then
+	echo "Could not find volume ${volume}"
+	exit 1
+    fi
 fi
 
-loopd=$( echo $loopdev | sed -e 's#.*/##' )
+if [ $PHYSDEV -eq 0 ] ; then
+    R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
+    if [ $RC -eq 0 ] ; then
+	loopdev=$( echo $R | awk '{ print $1 }' )
+	[ $DEBUG -gt 0 ] && echo "Image $volume already mapped to ${loopdev}."
+    else
+	R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
+	[ $RC -gt 0 ] && exit $RC
+	loopdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
+	[ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}."
+    fi
+    luksdev=$loopdev
+else
+    luksdev=$volume
+fi
+
+loopd=$( echo $luksdev | sed -e 's#.*/##' )
 R=$( udisksctl dump | egrep '( | CryptoBacking)Device: ' | grep -A1 "CryptoBackingDevice:.*/${loopd}" ) ; RC=$?
 if [ $RC -eq 0 ] ; then
     fsdev=$( echo $R | awk '{ print $4 }' )
@@ -76,10 +113,10 @@ else
 	    exit 1
 	fi
 	[ $CONCATENATE -gt 0 ] ; Resp=$pph$Resp
-	echo "Unlock of $loopdev will take a number of seconds, standby..."
+	echo "Unlock of $luksdev will take a number of seconds, standby..."
 	[ $DEBUG -gt 0 ] && echo "Sleep before socat unlocks $loopdev: ${sleepbefore}."
 	[ $DEBUG -gt 0 ] && echo "Sleep adter socat unlocked $loopdev: ${sleepafter}."
-	R=$( (sleep ${sleepbefore}; echo "$Resp"; sleep ${sleepafter}) | socat - EXEC:"udisksctl unlock -b $loopdev",pty,setsid,ctty ) ; RC=$?
+	R=$( (sleep ${sleepbefore}; echo "$Resp"; sleep ${sleepafter}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
 	unset pph ; unset Resp
 	R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
 	[ $DEBUG -gt 0 ] && echo "\$R: '$R'"
@@ -88,19 +125,23 @@ else
 	    echo "Passphrase prompt as response from unlock."
 	    echo "Variable \$sleepafter probably has to be increased."
 	    echo
-	    echo "Tear down loop device."
-	    udisksctl loop-delete -b $loopdev
+	    if [ $PHYSDEV -eq 0 ] ; then
+		echo "Tear down loop device."
+		udisksctl loop-delete -b $loopdev
+	    fi
 	    exit 1
 	fi
     else
 	echo "No configured YubiKey (slot ${YKSLOT}) found, will use static passphrase."
-	R=$( udisksctl unlock -b $loopdev ) ; RC=$?
+	R=$( udisksctl unlock -b $luksdev ) ; RC=$?
     fi
     if [ $RC -gt 0 ] ; then
 	echo "Could not unlock volume, maybe wrong passphrase."
 	echo $R
-	echo "Tear down loop device."
-	udisksctl loop-delete -b $loopdev
+	if [ $PHYSDEV -eq 0 ] ; then
+	    echo "Tear down loop device."
+	    udisksctl loop-delete -b $loopdev
+	fi
 	exit $RC
     fi
     fsdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
