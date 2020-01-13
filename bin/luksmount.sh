@@ -78,6 +78,37 @@ else
     fi
 fi
 
+do_yubikey () {
+    read -s -p "Enter challenge: " pph ; echo
+    [ $HASH -gt 0 ] && pph=$(printf %s "$pph" | sha256sum | awk '{print $1}')
+    echo "Sending challenge to YubiKey, press button if blinking."
+    Resp="$(ykchalresp -${YKSLOT} "$pph" || true )"
+    if [ -z "$Resp" ] ; then
+	unset pph ; unset Resp
+	echo "Yubikey not available, wrong config (slot ${YKSLOT}) or timed out waiting for button press."
+	exit 1
+    fi
+    [ $CONCATENATE -gt 0 ] ; Resp=$pph$Resp
+    echo "Unlock of $luksdev will take a number of seconds, standby..."
+    [ $DEBUG -gt 0 ] && echo "Sleep before socat unlocks $loopdev: ${sleepbefore}."
+    [ $DEBUG -gt 0 ] && echo "Sleep adter socat unlocked $loopdev: ${sleepafter}."
+    R=$( (sleep ${sleepbefore}; echo "$Resp"; sleep ${sleepafter}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
+    unset pph ; unset Resp
+    R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
+    [ $DEBUG -gt 0 ] && echo "\$R: '$R'"
+    if [ "$R" = "Passphrase: " ] ; then
+	echo
+	echo "Passphrase prompt as response from unlock."
+	echo "Variable \$sleepafter probably has to be increased."
+	echo
+	if [ $PHYSDEV -eq 0 ] ; then
+	    echo "Tear down loop device."
+	    udisksctl loop-delete -b $loopdev
+	fi
+	exit 1
+    fi
+}
+
 if [ $PHYSDEV -eq 0 ] ; then
     R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
     if [ $RC -eq 0 ] ; then
@@ -103,46 +134,40 @@ else
     R=$( ykinfo -q -${YKSLOT} 2>/dev/null ) ; RC=$?
     if [ $RC -eq 0 ] && [ $R -eq 1 ]; then
 	echo "Found attached YubiKey, will use challenge-response."
-	read -s -p "Enter challenge: " pph ; echo
-	[ $HASH -gt 0 ] && pph=$(printf %s "$pph" | sha256sum | awk '{print $1}')
-	echo "Sending challenge to YubiKey, press button if blinking."
-	Resp="$(ykchalresp -${YKSLOT} "$pph" || true )"
-	if [ -z "$Resp" ] ; then
-	    unset pph ; unset Resp
-	    echo "Yubikey not available, wrong config (slot ${YKSLOT}) or timed out waiting for button press."
-	    exit 1
-	fi
-	[ $CONCATENATE -gt 0 ] ; Resp=$pph$Resp
-	echo "Unlock of $luksdev will take a number of seconds, standby..."
-	[ $DEBUG -gt 0 ] && echo "Sleep before socat unlocks $loopdev: ${sleepbefore}."
-	[ $DEBUG -gt 0 ] && echo "Sleep adter socat unlocked $loopdev: ${sleepafter}."
-	R=$( (sleep ${sleepbefore}; echo "$Resp"; sleep ${sleepafter}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
-	unset pph ; unset Resp
-	R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
-	[ $DEBUG -gt 0 ] && echo "\$R: '$R'"
-	if [ "$R" = "Passphrase: " ] ; then
-	    echo
-	    echo "Passphrase prompt as response from unlock."
-	    echo "Variable \$sleepafter probably has to be increased."
-	    echo
-	    if [ $PHYSDEV -eq 0 ] ; then
-		echo "Tear down loop device."
-		udisksctl loop-delete -b $loopdev
-	    fi
-	    exit 1
-	fi
+	do_yubikey
     else
-	echo "No configured YubiKey (slot ${YKSLOT}) found, will use static passphrase."
-	R=$( udisksctl unlock -b $luksdev ) ; RC=$?
-    fi
-    if [ $RC -gt 0 ] ; then
-	echo "Could not unlock volume, maybe wrong passphrase."
-	echo $R
-	if [ $PHYSDEV -eq 0 ] ; then
-	    echo "Tear down loop device."
-	    udisksctl loop-delete -b $loopdev
-	fi
-	exit $RC
+	echo "No configured YubiKey (slot ${YKSLOT}) found."
+	read -p "Continue without YubiKey (y/N): " R
+	case $R in
+	    y|Y|[yY][eE][sS])
+		echo
+		echo "No configured YubiKey (slot ${YKSLOT}) found, will use static passphrase."
+		R=$( udisksctl unlock -b $luksdev ) ; RC=$?
+		if [ $RC -gt 0 ] ; then
+		    echo "Could not unlock volume, maybe wrong passphrase."
+		    echo $R
+		    if [ $PHYSDEV -eq 0 ] ; then
+			echo "Tear down loop device."
+			udisksctl loop-delete -b $loopdev
+		    fi
+		    exit $RC
+		fi
+		;;
+	    *)
+		R=$( ykinfo -q -${YKSLOT} 2>/dev/null ) ; RC=$?
+		if [ $RC -eq 0 ] && [ $R -eq 1 ]; then
+		    echo "Found attached YubiKey, will use challenge-response."
+		    do_yubikey
+		else
+		    echo "No configured YubiKey (slot ${YKSLOT}) found, exiting."
+		    if [ $PHYSDEV -eq 0 ] ; then
+			echo "Tear down loop device."
+			udisksctl loop-delete -b $loopdev
+		    fi
+		    exit
+		fi
+		;;
+	esac
     fi
     fsdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
     [ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}."
