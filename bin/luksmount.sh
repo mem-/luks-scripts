@@ -131,6 +131,7 @@ if [ $RC -eq 0 ] ; then
     fsdev=$( echo $R | awk '{ print $4 }' )
     [ $DEBUG -gt 0 ] && echo "Filesystem already unlocked as ${fsdev}."
 else
+    echo ; echo "Unlock volume: $volume"
     R=$( ykinfo -q -${YKSLOT} 2>/dev/null ) ; RC=$?
     if [ $RC -eq 0 ] && [ $R -eq 1 ]; then
 	echo "Found attached YubiKey, will use challenge-response."
