@@ -27,6 +27,11 @@ PHYSDEV=0
 
 [ -f $CONFIG ] && . $CONFIG
 
+echo "to include functions from relative location of script it self:"
+echo "https://stackoverflow.com/questions/59895/how-to-get-the-source-directory-of-a-bash-script-from-within-the-script-itself"
+echo "https://www.cyberciti.biz/faq/unix-linux-appleosx-bsd-bash-script-find-what-directory-itsstoredin/"
+echo
+
 # Sleep values when running 'socat' as wrapper for 'udiskctl unlock'
 sleepbefore=2 ; sleepafter=5
 
@@ -37,7 +42,7 @@ fi
 
 if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     echo
-    echo "Usage: $0 [-h] [-v] <volume>"
+    echo "Usage: $0 [-h] [-v] <volume> [<size>]"
     echo
     echo " -h       : Show this help text"
     echo " -v       : Verbose mode"
@@ -50,6 +55,17 @@ if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     echo "          : The volume can also be a physical device, like USB stick,"
     echo "          : Available LUKS devices :"
     lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep -v '@@' | grep -v "^loop" | awk '{ print "            /dev/" $1 }'
+    echo
+    echo " <size>   : The new volume size."
+    echo "          :"
+    echo "          : For physical devices and partitions the <size> value will not matter,"
+    echo "          : the entire device/partition will be used."
+    echo "          :"
+    echo "          : When using '+' prefix the new size is not an absolute size, then it"
+    echo "          : indicates how much the volume should be extended."
+    echo "          :"
+    echo "          : If the size value is ombitted, you will be asked for new size when"
+    echo "          : managing an image file."
     echo
     exit
 fi
@@ -96,11 +112,72 @@ else
     fi
 fi
 
-# Make sure the volume is not mounted
-echo "Unmounting ${volume}, if in use"
-luksunmount $volume
-echo
+do_yubikey () {
+    read -s -p "Enter challenge: " pph ; echo
+    [ $HASH -gt 0 ] && pph=$(printf %s "$pph" | sha256sum | awk '{print $1}')
+    echo "Sending challenge to YubiKey, press button if blinking."
+    Resp="$(ykchalresp -${YKSLOT} "$pph" || true )"
+    if [ -z "$Resp" ] ; then
+	unset pph ; unset Resp
+	echo "Yubikey not available, wrong config (slot ${YKSLOT}) or timed out waiting for button press."
+	exit 1
+    fi
+    [ $CONCATENATE -gt 0 ] ; Resp=$pph$Resp
+    echo "Unlock of $luksdev will take a number of seconds, standby..."
+    [ $DEBUG -gt 0 ] && echo "Sleep before socat unlocks $loopdev: ${sleepbefore}."
+    [ $DEBUG -gt 0 ] && echo "Sleep adter socat unlocked $loopdev: ${sleepafter}."
+    R=$( (sleep ${sleepbefore}; echo "$Resp"; sleep ${sleepafter}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
+    unset pph ; unset Resp
+    R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
+    [ $DEBUG -gt 0 ] && echo "\$R: '$R'"
+    if [ "$R" = "Passphrase: " ] ; then
+	echo
+	echo "Passphrase prompt as response from unlock."
+	echo "Variable \$sleepafter probably has to be increased."
+	echo
+	if [ $PHYSDEV -eq 0 ] ; then
+	    echo "Tear down loop device."
+	    udisksctl loop-delete -b $loopdev
+	fi
+	exit 1
+    fi
+}
 
+if [ $PHYSDEV -eq 0 ] ; then
+    R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
+    if [ $RC -eq 0 ] ; then
+	loopdev=$( echo $R | awk '{ print $1 }' )
+	[ $DEBUG -gt 0 ] && echo "Image $volume already mapped to ${loopdev}."
+    else
+	R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
+	[ $RC -gt 0 ] && exit $RC
+	loopdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
+	[ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}."
+    fi
+    luksdev=$loopdev
+else
+    luksdev=$volume
+fi
+
+# Chech that it is a LUKS device
+echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
+$SUCMD "cryptsetup isLuks $luksdev" ; RC=$?
+if [ $RC -gt 0 ] ; then
+    echo "Not a LUKS device: $luksdev"
+    exit 1
+fi
+
+echo
+echo 'LUKS header offset and data size: /usr/sbin/cryptsetup luksDump /dev/loopX | grep -A5 "^Data segments" | egrep "(offset|length):"'
+echo
+echo 'FS-size: /usr/sbin/tune2fs -l /dev/dm-X | egrep "Block (count|size):"'
+echo 'For the moment used size: "Block size" * "Block count" + "Data segment offset"'
+
+# Make sure the volume is not mounted
+#echo "Unmounting ${volume}, if in use"
+#luksunmount $volume
+
+echo
 echo "ENDING"
 exit
 
