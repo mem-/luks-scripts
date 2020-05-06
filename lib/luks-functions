@@ -1,0 +1,36 @@
+# Version 0.1 Copyright (c) Magnus (Mem) Sandberg 2020
+# Email: mem (a) datakon , se
+#
+# Created by Mem, 2020-05-06
+
+# Used by luksextend.sh
+do_yubikey () {
+    read -s -p "Enter challenge: " pph ; echo
+    [ $HASH -gt 0 ] && pph=$(printf %s "$pph" | sha256sum | awk '{print $1}')
+    echo "Sending challenge to YubiKey, press button if blinking."
+    Resp="$( ykchalresp -${YKSLOT} "$pph" || true )"
+    if [ -z "$Resp" ] ; then
+	unset pph ; unset Resp
+	echo "Yubikey not available, wrong config (slot ${YKSLOT}) or timed out waiting for button press."
+	exit 1
+    fi
+    [ $CONCATENATE -gt 0 ] ; Resp=$pph$Resp
+    echo "Unlock of $luksdev will take a number of seconds, standby..."
+    [ $DEBUG -gt 0 ] && echo "Sleep before socat unlocks $loopdev: ${SLEEPBEFORE}."
+    [ $DEBUG -gt 0 ] && echo "Sleep adter socat unlocked $loopdev: ${SLEEPAFTER}."
+    R=$( (sleep ${SLEEPBEFORE}; echo "$Resp"; sleep ${SLEEPAFTER}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
+    unset pph ; unset Resp
+    R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
+    [ $DEBUG -gt 0 ] && echo "\$R: '$R'"
+    if [ "$R" = "Passphrase: " ] ; then
+	echo
+	echo "Passphrase prompt as response from unlock."
+	echo "Variable \$SLEEPAFTER probably has to be increased in $CONFIG."
+	echo
+	if [ $PHYSDEV -eq 0 ] ; then
+	    echo "Tear down loop device."
+	    udisksctl loop-delete -b $loopdev
+	fi
+	exit 1
+    fi
+}
