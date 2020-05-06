@@ -24,16 +24,10 @@ IMAGEPATH="$HOME/.images"
 CONFIG=$HOME/.config/luks-mgmt.conf
 DEBUG=0
 PHYSDEV=0
+# Sleep values when running 'socat' as wrapper for 'udiskctl unlock'
+SLEEPBEFORE=2 ; SLEEPAFTER=5
 
 [ -f $CONFIG ] && . $CONFIG
-
-echo "to include functions from relative location of script it self:"
-echo "https://stackoverflow.com/questions/59895/how-to-get-the-source-directory-of-a-bash-script-from-within-the-script-itself"
-echo "https://www.cyberciti.biz/faq/unix-linux-appleosx-bsd-bash-script-find-what-directory-itsstoredin/"
-echo
-
-# Sleep values when running 'socat' as wrapper for 'udiskctl unlock'
-sleepbefore=2 ; sleepafter=5
 
 if [ "x$1" = "x-v" ] ; then
     DEBUG=1
@@ -80,6 +74,36 @@ if ! which socat >/dev/null 2>&1 ; then
     exit 1
 fi
 
+# Find location of this script it self to locate functions to include
+# Seach path /lib/luks-mgmt/luks-functions, DIRNAME($0)/../lib/luks-functions, DIRNAME($0)/luks-functions,
+# https://www.cyberciti.biz/faq/unix-linux-appleosx-bsd-bash-script-find-what-directory-itsstoredin/
+
+[ $DEBUG -gt 0 ] && echo "Looking for 'luks-functions' location"
+if [ -r /lib/luks-mgmt/luks-functions ]; then
+    [ $DEBUG -gt 0 ] && echo "Sourcing /lib/luks-mgmt/luks-functions"
+    . /lib/luks-mgmt/luks-functions
+else
+    # Find location of this script it self
+    _scriptdir="$( dirname $( readlink -f ${BASH_SOURCE[0]} ) )"
+#   [ $DEBUG -gt 0 ] && echo "Script's location: $_scriptdir"
+    _libdir="$( echo $_scriptdir | sed -e 's#/$##' | sed -e 's/[^/]\+$/lib/' )"
+#   [ $DEBUG -gt 0 ] && echo "Lib dir: $_libdir"
+
+    if [ -r $_libdir/luks-functions ]; then
+	[ $DEBUG -gt 0 ] && echo "Sourcing $_libdir/luks-functions"
+	. $_libdir/luks-functions
+    elif [ -r $_scriptdir/luks-functions ]; then
+	[ $DEBUG -gt 0 ] && echo "Sourcing $_scriptdir/luks-functions"
+	. $_scriptdir/luks-functions
+    else
+	echo "Could not find any 'luks-functions' to include!"
+	exit 1
+    fi
+fi
+[ $DEBUG -gt 0 ] && echo
+
+exit
+
 volume=$1
 if echo $volume | grep "\.\." >/dev/null ; then
     echo "Dangerous filename including '..': $volume"
@@ -111,37 +135,6 @@ else
 	exit 1
     fi
 fi
-
-do_yubikey () {
-    read -s -p "Enter challenge: " pph ; echo
-    [ $HASH -gt 0 ] && pph=$(printf %s "$pph" | sha256sum | awk '{print $1}')
-    echo "Sending challenge to YubiKey, press button if blinking."
-    Resp="$(ykchalresp -${YKSLOT} "$pph" || true )"
-    if [ -z "$Resp" ] ; then
-	unset pph ; unset Resp
-	echo "Yubikey not available, wrong config (slot ${YKSLOT}) or timed out waiting for button press."
-	exit 1
-    fi
-    [ $CONCATENATE -gt 0 ] ; Resp=$pph$Resp
-    echo "Unlock of $luksdev will take a number of seconds, standby..."
-    [ $DEBUG -gt 0 ] && echo "Sleep before socat unlocks $loopdev: ${sleepbefore}."
-    [ $DEBUG -gt 0 ] && echo "Sleep adter socat unlocked $loopdev: ${sleepafter}."
-    R=$( (sleep ${sleepbefore}; echo "$Resp"; sleep ${sleepafter}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
-    unset pph ; unset Resp
-    R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
-    [ $DEBUG -gt 0 ] && echo "\$R: '$R'"
-    if [ "$R" = "Passphrase: " ] ; then
-	echo
-	echo "Passphrase prompt as response from unlock."
-	echo "Variable \$sleepafter probably has to be increased."
-	echo
-	if [ $PHYSDEV -eq 0 ] ; then
-	    echo "Tear down loop device."
-	    udisksctl loop-delete -b $loopdev
-	fi
-	exit 1
-    fi
-}
 
 if [ $PHYSDEV -eq 0 ] ; then
     R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
@@ -341,9 +334,9 @@ if [ $STATICPW -gt 0 ] ; then
 	fi
     fi
     [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
-    [ $DEBUG -gt 0 ] && echo "Sleep before socat unlocks $loopdev: ${sleepbefore}."
-    [ $DEBUG -gt 0 ] && echo "Sleep adter socat unlocked $loopdev: ${sleepafter}."
-    R=$( (sleep ${sleepbefore}; echo "$PW1"; sleep ${sleepafter}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
+    [ $DEBUG -gt 0 ] && echo "Sleep before socat unlocks $loopdev: ${SLEEPBEFORE}."
+    [ $DEBUG -gt 0 ] && echo "Sleep adter socat unlocked $loopdev: ${SLEEPAFTER}."
+    R=$( (sleep ${SLEEPBEFORE}; echo "$PW1"; sleep ${SLEEPAFTER}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
     R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
     unset PW1 ; unset Resp
 else
@@ -364,7 +357,7 @@ else
 	exit $RC
     fi
     [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
-    R=$( (sleep ${sleepbefore}; echo "$Resp"; sleep ${sleepafter}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
+    R=$( (sleep ${SLEEPBEFORE}; echo "$Resp"; sleep ${SLEEPAFTER}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
     R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
     unset Resp
 fi
