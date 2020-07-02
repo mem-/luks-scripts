@@ -3,6 +3,59 @@
 #
 # Created by Mem, 2020-05-06
 
+## Maybe useful functions
+#info () {
+#    if [ ! "x${LOGFILE}" = "x" ] ; then
+#	echo $* >>${LOGFILE}
+#    else
+#	echo $*
+#    fi
+#}
+#error () {
+#    if [ ! "x${LOGFILE}" = "x" ] ; then
+#	echo $* >>${LOGFILE}
+#    fi
+#    echo >2 $*
+#}
+
+# Used by luksextend.sh
+valid_volume () {
+    # Check if volume (file)name is valid
+    local volume="$1"
+
+    if echo $volume | grep "\.\." >/dev/null ; then
+	echo "Dangerous filename including '..': $volume"
+	return 10
+    fi
+    if echo $volume | grep "\./" >/dev/null ; then
+	echo "Un-supported filename including './': $volume"
+	return 10
+    fi
+    if echo $volume | grep "^/dev/" >/dev/null ; then
+	if [ ! -b $volume ] ; then
+	    echo "Device ${volume} doesn't exists or is not a block device."
+	    return 1
+	fi
+    else
+	if echo $volume | grep "/" >/dev/null ; then
+	    echo "Un-supported filename including '/': $volume"
+	    echo "No path under or outside $IMAGEPATH supported!"
+	    return 10
+	fi
+	if echo $volume | grep " " >/dev/null ; then
+	    echo "Un-supported filename including ' ' (space char): $volume"
+	    return 10
+	fi
+	volume=$( echo $volume | sed -e 's/\.img$//' )
+	if [ ! -f ${IMAGEPATH}/${volume}.img ] ; then
+	    echo "Could not find volume ${volume}"
+	    return 1
+	fi
+    fi
+    echo $volume
+    return 0
+}
+
 # Used by luksextend.sh
 do_yubikey () {
     read -s -p "Enter challenge: " pph ; echo
