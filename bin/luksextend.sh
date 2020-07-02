@@ -104,39 +104,20 @@ fi
 
 exit
 
-volume=$1
-if echo $volume | grep "\.\." >/dev/null ; then
-    echo "Dangerous filename including '..': $volume"
-    exit 1
+# Validate volume (file) name
+R=$( valid_volume "$1" ) ; RC=$?
+if [ $RC -gt 0 ] ; then
+    echo "$R"
+    exit $RC
 fi
-if echo $volume | grep "\./" >/dev/null ; then
-    echo "Un-supported filename including './': $volume"
-    exit 1
-fi
+volume="$R"
+
+# If image file, loopback mount it.
+# Otherwise the volume name should be the block device it self
 if echo $volume | grep "^/dev/" >/dev/null ; then
     PHYSDEV=1
-    if [ ! -b $volume ] ; then
-	echo "Device ${volume} doesn't exists or is not a block device."
-	exit 1
-    fi
+    luksdev=$volume
 else
-    if echo $volume | grep "/" >/dev/null ; then
-	echo "Un-supported filename including '/': $volume"
-	echo "No path under or outside $IMAGEPATH supported!"
-	exit 1
-    fi
-    if echo $volume | grep " " >/dev/null ; then
-	echo "Un-supported filename including ' ' (space char): $volume"
-	exit 1
-    fi
-    volume=$( echo $volume | sed -e 's/\.img$//' )
-    if [ ! -f ${IMAGEPATH}/${volume}.img ] ; then
-	echo "Could not find volume ${volume}"
-	exit 1
-    fi
-fi
-
-if [ $PHYSDEV -eq 0 ] ; then
     R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
     if [ $RC -eq 0 ] ; then
 	loopdev=$( echo $R | awk '{ print $1 }' )
@@ -148,11 +129,13 @@ if [ $PHYSDEV -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}."
     fi
     luksdev=$loopdev
-else
-    luksdev=$volume
 fi
 
 # Chech that it is a LUKS device
+R=$( udisksctl info -b ${luksdev} | grep IdType | awk '{ print $2 }' ) ; RC=$?
+
+exit 999
+
 echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
 $SUCMD "cryptsetup isLuks $luksdev" ; RC=$?
 if [ $RC -gt 0 ] ; then
