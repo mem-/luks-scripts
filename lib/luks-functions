@@ -1,7 +1,12 @@
+# -*- mode: sh -*-
 # Version 0.1 Copyright (c) Magnus (Mem) Sandberg 2020
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2020-05-06
+
+# Version control of this file
+LUKS_FUNCTIONS_MAJOR="1"
+LUKS_FUNCTIONS_MINOR="1"
 
 ## Maybe useful functions
 #info () {
