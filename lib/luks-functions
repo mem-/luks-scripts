@@ -6,7 +6,7 @@
 
 # Version control of this file
 LUKS_FUNCTIONS_MAJOR="1"
-LUKS_FUNCTIONS_MINOR="1"
+LUKS_FUNCTIONS_MINOR="2"
 
 ## Maybe useful functions
 #info () {
@@ -26,20 +26,36 @@ LUKS_FUNCTIONS_MINOR="1"
 # Used by luksextend.sh
 valid_volume () {
     # Check if volume (file)name is valid
+    #
+    # Return codes:
+    # 10: dangerous filename
+    #  7: filename is okay but is not a reglular file
+    #  5: non-existing block device
+    #  1: filename is okay but file not created yet
+    #  0: filename is okay and regular file found
+    #
+    # Return string:
+    # error message,
+    # or volume (file)name, trailing ".img" removed
     local volume="$1"
 
     if echo $volume | grep "\.\." >/dev/null ; then
 	echo "Dangerous filename including '..': $volume"
 	return 10
-    fi
-    if echo $volume | grep "\./" >/dev/null ; then
+    elif echo $volume | grep "\./" >/dev/null ; then
 	echo "Un-supported filename including './': $volume"
+	return 10
+    elif echo $volume | grep " " >/dev/null ; then
+	echo "Un-supported filename including ' ' (space char): $volume"
 	return 10
     fi
     if echo $volume | grep "^/dev/" >/dev/null ; then
-	if [ ! -b $volume ] ; then
+	if [ -b $volume ] ; then
+	    echo ${volume}
+	    return 0
+	else
 	    echo "Device ${volume} doesn't exists or is not a block device."
-	    return 1
+	    return 5
 	fi
     else
 	if echo $volume | grep "/" >/dev/null ; then
@@ -47,18 +63,237 @@ valid_volume () {
 	    echo "No path under or outside $IMAGEPATH supported!"
 	    return 10
 	fi
-	if echo $volume | grep " " >/dev/null ; then
-	    echo "Un-supported filename including ' ' (space char): $volume"
-	    return 10
-	fi
 	volume=$( echo $volume | sed -e 's/\.img$//' )
-	if [ ! -f ${IMAGEPATH}/${volume}.img ] ; then
-	    echo "Could not find volume ${volume}"
-	    return 1
+	if [ -f ${IMAGEPATH}/${volume}.img ] ; then
+	    echo $volume
+	    return 0
+	elif [ -e ${IMAGEPATH}/${volume}.img ] ; then
+	    echo "File ${volume}.img is not a regular file."
+	    return 7
 	fi
     fi
     echo $volume
+    return 1
+}
+
+# Used by volume_info()
+number_to_human () {
+    local dec=""
+    local number="$1"
+
+    if [ "$(( ${number}/1024*1024 ))" -eq ${number} ] ; then
+	for unit in B K M G T P E Z Y; do
+            if [ $number -lt 1024 ] || [ "$unit" = "Y" ] ; then
+		[ "$dec" = ".00" ] && dec=""
+		echo "${number}${dec}${unit}"
+		break
+            fi
+	    printf -v dec ".%02d" $((number % 1024 * 100 / 1024))
+            number=$((number/1024))
+	done
+    else
+	for unit in B kB MB GB TB PB EB ZB YB; do
+            if [ $number -lt 1000 ] || [ "$unit" = "YB" ] ; then
+		[ "$dec" = ".00" ] && dec=""
+		echo "${number}${dec}${unit}"
+		break
+            fi
+	    printf -v dec ".%02d" $((number % 1000 * 100 / 1000))
+            number=$((number/1000))
+	done
+    fi
+}
+
+human_to_number () {
+    # We use "exit" to only process the first value, otherwise use "next"
+    echo "$1" | awk \
+	'BEGIN{IGNORECASE = 1}
+	function printpower(n,b,p) {printf "%.0f\n", n*b^p; exit;}
+	/[0-9]$/{print $1; exit;};
+	/c$/{printf "%.0f\n", $1; exit;};
+	/w$/{printf "%..f\n", $1; exit;};
+	/b$/{printf "%.0f\n", $1*512; exit;};
+	/K(iB)?$/{printpower($1,  2, 10)};
+	/M(iB)?$/{printpower($1,  2, 20)};
+	/G(iB)?$/{printpower($1,  2, 30)};
+	/T(iB)?$/{printpower($1,  2, 40)};
+	/P(iB)?$/{printpower($1,  2, 50)};
+	/E(iB)?$/{printpower($1,  2, 60)};
+	/Z(iB)?$/{printpower($1,  2, 70)};
+	/Y(iB)?$/{printpower($1,  2, 80)};
+	/KB$/{    printpower($1, 10,  3)};
+	/MB$/{    printpower($1, 10,  6)};
+	/GB$/{    printpower($1, 10,  9)};
+	/TB$/{    printpower($1, 10, 12)};
+	/PB$/{    printpower($1, 10, 15)};
+	/EB$/{    printpower($1, 10, 18)};
+	/ZB$/{    printpower($1, 10, 21)};
+	/YB$/{    printpower($1, 10, 24)};
+	/.*/{print "Error"; exit 1;}'
+}
+
+# Used by luksextend.sh
+volume_info () {
+    # Info about an image file
+    #
+    # Return codes:
+    # >0: ?
+    #  0: all okay
+    #
+    # Return string:
+    # information string
+    local R="" ; local RC=""
+    local used_blocks="" ; local block_size="" ; local file_size=""
+    local sparse="" ; local type="" ; local free=""
+    local volume="$1"
+
+    read used_blocks block_size file_size <<<$( stat -c '%b %B %s' -- ${IMAGEPATH}/${volume}.img )
+    [ "$(( ${used_blocks}*${block_size}-${file_size} ))" -lt 0 ] && spares=1 || sparse=0
+    [ "$(( ${file_size}/1024*1024 ))" -eq ${file_size} ] && type="KiB" || type="B"
+    free="$(( $(stat -f -c '%a*%s' -- ${IMAGEPATH}/.) ))"
+    filehuman=$( number_to_human $file_size )
+    freehuman=$( number_to_human $free )
+    echo "${spares}:${file_size}:${filehuman}:${type}:${free}:${freehuman}"
     return 0
+}
+
+# Used by luksextend.sh
+setup_loopdevice () {
+    # Set up loop device for volume file
+    #
+    # Return codes:
+    # >0: some loop device set up problem
+    #  0: loop device now set up
+    #
+    # Return string:
+    # error message,
+    # or state:loop-devide
+    #
+    # state:
+    #  0: new set up of loop device
+    #  1: previous setup of loop device
+    local R="" ; local RC=""
+    local volume="$1"
+    local loopdev=""
+
+    R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
+    if [ $RC -eq 0 ] ; then
+	loopdev="1:$( echo $R | awk '{ print $1 }' )"
+    else
+	R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R"
+	    return $RC
+	fi
+	loopdev="0:$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )"
+    fi
+    echo $loopdev
+    return 0
+}
+
+# Used by luksextend.sh
+teardown_loopdevice () {
+    # Tear down loop device
+    #
+    # Return codes:
+    # >0: some udisksctl problem
+    #  0: loop device teared down
+    #
+    # Return string:
+    # any output from udisksctl
+    local R="" ; local RC=""
+    local loopdev="$1"
+
+    R=$( udisksctl loop-delete -b $loopdev ) ; RC=$?
+    echo "$R"
+    return $RC
+}
+
+# Used by luksextend.sh
+check_if_luks_volume () {
+    # Check that it is a LUKS volume
+    # alternative command (as root): "cryptsetup isLuks $luksdev"
+    #
+    # Return codes:
+    # >1: The return code from udisksctl
+    #  1: Either not LUKS volume or error from udisksctl
+    #  0: LUKS volume found
+    #
+    # Return string:
+    # IdType or error message from udisksctl
+    local R="" ; local RC=""
+    local luksdev="$1"
+
+    R=$( udisksctl info -b ${luksdev} | grep IdType | awk '{ print $2 }' ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R" ; return $RC
+    fi
+    if [ "X$R" != "Xcrypto_LUKS" ] ; then
+	R="Not a LUKS volume."
+	RC=1
+    fi
+    echo "$R"
+    return $RC
+}
+
+# Used by luksextend.sh
+check_if_unlocked () {
+    # Check that if the LUKS volume is unlocked
+    #
+    # Return codes:
+    #  1: not unlocked
+    #  0: LUKS volume is unlocked
+    #
+    # Return string:
+    # filesystem device or error message from udisksctl
+    local R="" ; local RC=""
+    local luksdev="$1"
+
+    local device=$( echo $luksdev | sed -e 's#.*/##' )
+    R=$( udisksctl dump | egrep '( | CryptoBacking)Device: ' | grep -A1 "CryptoBackingDevice:.*/${device}" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "LUKS volume not unlocked." ; return $RC
+    fi
+    # Retrun the 4th value as filesystem device
+    echo $R | awk '{ print $4 }'
+    return 0
+}
+
+# Used by luksextend.sh
+check_if_mounted () {
+    # Check that if the LUKS volume has mounted filesystem
+    #
+    # Return codes:
+    #  5: not mounted
+    #  1: df don't find the device
+    #  0: LUKS volume has mounted filesystem
+    #
+    # Return string:
+    # filesystem mountpoint
+    local R="" ; local RC=""
+    local fsdev="$1"
+
+    R=$( df --output=target ${fsdev} ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R" ; return $RC
+    fi
+    local filesys=$( echo $R | awk '{ print $3 }' )
+    if [ "x$filesys" = "x/dev" ] ; then
+	echo "Filesystem not mounted."
+	return 5
+    fi
+    echo $filesys
+    return 0
+}
+
+
+# Not in use, just some concept/documentation
+concept_volume_info () {
+    echo
+    echo 'LUKS header offset and data size: /usr/sbin/cryptsetup luksDump /dev/loopX | grep -A5 "^Data segments" | egrep "(offset|length):"'
+    echo
+    echo 'FS-size: /usr/sbin/tune2fs -l /dev/dm-X | egrep "Block (count|size):"'
+    echo 'For the moment used size: "Block size" * "Block count" + "Data segment offset"'
 }
 
 # Used by luksextend.sh
