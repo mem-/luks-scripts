@@ -12,7 +12,6 @@
 # Developed for udisks2 2.8.1-4 (Debian 10.x Buster)
 #
 # Depends Debian packages:    socat, udisks2, yubikey-personalization (need when using YubiKey)
-# Recommends Debian packages: a2ps
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
@@ -102,52 +101,90 @@ else
 fi
 [ $DEBUG -gt 0 ] && echo
 
-exit
-
 # Validate volume (file) name
 R=$( valid_volume "$1" ) ; RC=$?
-if [ $RC -gt 0 ] ; then
-    echo "$R"
-    exit $RC
+if [ $RC -gt 1 ] ; then
+    echo "$R" ; exit $RC
+elif [ $RC -eq 1 ] ; then
+    echo "No volume found with filename: ${R}.img"
+    exit 1
 fi
 volume="$R"
 
-# If image file, loopback mount it.
-# Otherwise the volume name should be the block device it self
+# If image file, set up loop device.
+# Otherwise the volume name should be the block device it self.
 if echo $volume | grep "^/dev/" >/dev/null ; then
     PHYSDEV=1
     luksdev=$volume
+    [ $DEBUG -gt 0 ] && echo "Block device: ${volume}."
 else
-    R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
-    if [ $RC -eq 0 ] ; then
-	loopdev=$( echo $R | awk '{ print $1 }' )
-	[ $DEBUG -gt 0 ] && echo "Image $volume already mapped to ${loopdev}."
-    else
-	R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
-	[ $RC -gt 0 ] && exit $RC
-	loopdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
-	[ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}."
+    R=$( setup_loopdevice "${volume}" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R" ; exit $RC
     fi
+    read loop_state loopdev <<<$( IFS=":"; echo $R )
+    DEBUG_loopdev[0]="Image file attached to loop device: ${loopdev}."
+    DEBUG_loopdev[1]="Image file already attached to ${loopdev}."
+    [ $DEBUG -gt 0 ] && echo "${DEBUG_loopdev[$loop_state]}"
     luksdev=$loopdev
 fi
 
-# Chech that it is a LUKS device
-R=$( udisksctl info -b ${luksdev} | grep IdType | awk '{ print $2 }' ) ; RC=$?
-
-exit 999
-
-echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-$SUCMD "cryptsetup isLuks $luksdev" ; RC=$?
+# Chech that it is a LUKS volume
+R=$( check_if_luks_volume "${luksdev}" ) ; RC=$?
 if [ $RC -gt 0 ] ; then
-    echo "Not a LUKS device: $luksdev"
-    exit 1
+    echo "$R"
+    # If we handled the loop device, tear it down
+    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
+	fi
+    fi
+    exit $RC
+fi
+[ $DEBUG -gt 0 ] && echo "Is a LUKS volume type: $R"
+
+R=$( volume_info "${volume}" ) ; RC=$?
+if [ $RC -gt 0 ] ; then
+    echo "$R" ; exit $RC
+fi
+volinfo="$R"
+[ $DEBUG -gt 0 ] && echo -e "Volume info: ${volinfo}.\n"
+
+# Chech if unlocked
+R=$( check_if_unlocked "${luksdev}" ) ; RC=$?
+if [ $RC -gt 0 ] ; then
+    # We continue even when not unlocked
+    #echo "$R" ; exit $RC
+    [ $DEBUG -gt 0 ] && echo "$R"
+    fsdev=""
+    filesys=""
+else
+    fsdev="$R"
+    [ $DEBUG -gt 0 ] && echo "LUKS volume unlocked as ${fsdev}."
+
+    # Chech if mounted
+    R=$( check_if_mounted "${fsdev}" ) ; RC=$?
+    if [ $RC -eq 5 ] ; then
+	# not mounted
+	[ $DEBUG -gt 0 ] && echo "$R"
+	filesys=""
+    elif [ $RC -gt 0 ] ; then
+	echo "$R" ; exit $RC
+    else
+	filesys="$R"
+	[ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${filesys}."
+    fi
+fi
+[ $DEBUG -gt 0 ] && echo ""
+
+if [ "x" != "x${luksdev}" ] || [ "x" != "x${fsdev}" ] || [ "x" != "x${filesys}" ] ; then
+    echo "For now $( basename $( readlink -f ${BASH_SOURCE[0]} ) ) only supports off-line mode."
 fi
 
-echo
-echo 'LUKS header offset and data size: /usr/sbin/cryptsetup luksDump /dev/loopX | grep -A5 "^Data segments" | egrep "(offset|length):"'
-echo
-echo 'FS-size: /usr/sbin/tune2fs -l /dev/dm-X | egrep "Block (count|size):"'
-echo 'For the moment used size: "Block size" * "Block count" + "Data segment offset"'
+echo "Test ended"
+exit
 
 # Make sure the volume is not mounted
 #echo "Unmounting ${volume}, if in use"
