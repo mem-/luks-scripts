@@ -6,7 +6,7 @@
 
 # Version control of this file
 LUKS_FUNCTIONS_MAJOR="1"
-LUKS_FUNCTIONS_MINOR="2"
+LUKS_FUNCTIONS_MINOR="3"
 
 ## Maybe useful functions
 #info () {
@@ -22,6 +22,188 @@ LUKS_FUNCTIONS_MINOR="2"
 #    fi
 #    echo >2 $*
 #}
+
+# Used by volume_info(), disk_free()
+int_to_human () {
+    # Convert integer number to human readable
+    #
+    # Return codes:
+    #  1: not an integer number
+    #  0: number converted
+    #
+    # Return string:
+    # human readable value
+    local dec=""
+    local int="$1"
+
+    # Return to caller if not an integer
+    [[ "$int" =~ ^[0-9]+$ ]] || return $?
+
+    if [ "$(( ${int}/1024*1024 ))" -eq ${int} ] ; then
+	for unit in B K M G T P E Z Y; do
+            if [ $int -lt 1024 ] || [ "$unit" = "Y" ] ; then
+		[ "$dec" = ".00" ] && dec=""
+		echo "${int}${dec}${unit}"
+		break
+            fi
+	    printf -v dec ".%02d" $((int % 1024 * 100 / 1024))
+            int=$((int/1024))
+	done
+    else
+	for unit in B kB MB GB TB PB EB ZB YB; do
+            if [ $int -lt 1000 ] || [ "$unit" = "YB" ] ; then
+		[ "$dec" = ".00" ] && dec=""
+		echo "${int}${dec}${unit}"
+		break
+            fi
+	    printf -v dec ".%02d" $((int % 1000 * 100 / 1000))
+            int=$((int/1000))
+	done
+    fi
+}
+
+# Used by calc_newsize()
+human_to_number () {
+    # Convert human readable to number
+    # Inspired by https://stackoverflow.com/a/31625253
+    #
+    # Return codes:
+    #  1: not a supported input format
+    #  0: number converted
+    #
+    # Return string:
+    # error message,
+    # or number (if input is decimal without extention, will retrun decimal number)
+    local human="$1"
+
+    # We use "exit" to only process the first value, otherwise use "next"
+    # 'IGNORECASE = 1' only works with Gnu's awk
+    echo "$human" | awk \
+	'BEGIN{IGNORECASE = 1}
+	function printpower(n,b,p) {printf "%.0f\n", n*b^p; exit;}
+	/^-[0-9]+[.0-9]?[0-9]*/{print "Negative numbers not supported: " $1; exit 1;};
+	/^[0-9]+c$/{printf "%.0f\n", $1; exit;};
+	/^[0-9]+B$/{printf "%.0f\n", $1; exit;};
+	/^[0-9]+w$/{printf "%..f\n", $1*2; exit;};
+	/^[0-9]+b$/{printf "%.0f\n", $1*512; exit;};
+	/^[0-9]+[.0-9]?[0-9]*$/{printf "%.0f\n", $1; exit;};
+	/^[0-9]+[.0-9]?[0-9]*K(iB)?$/{printpower($1,  2, 10)};
+	/^[0-9]+[.0-9]?[0-9]*M(iB)?$/{printpower($1,  2, 20)};
+	/^[0-9]+[.0-9]?[0-9]*G(iB)?$/{printpower($1,  2, 30)};
+	/^[0-9]+[.0-9]?[0-9]*T(iB)?$/{printpower($1,  2, 40)};
+	/^[0-9]+[.0-9]?[0-9]*P(iB)?$/{printpower($1,  2, 50)};
+	/^[0-9]+[.0-9]?[0-9]*E(iB)?$/{printpower($1,  2, 60)};
+	/^[0-9]+[.0-9]?[0-9]*Z(iB)?$/{printpower($1,  2, 70)};
+	/^[0-9]+[.0-9]?[0-9]*Y(iB)?$/{printpower($1,  2, 80)};
+	/^[0-9]+[.0-9]?[0-9]*kB$/{    printpower($1, 10,  3)};
+	/^[0-9]+[.0-9]?[0-9]*KB$/{    printpower($1, 10,  3)};
+	/^[0-9]+[.0-9]?[0-9]*MB$/{    printpower($1, 10,  6)};
+	/^[0-9]+[.0-9]?[0-9]*GB$/{    printpower($1, 10,  9)};
+	/^[0-9]+[.0-9]?[0-9]*TB$/{    printpower($1, 10, 12)};
+	/^[0-9]+[.0-9]?[0-9]*PB$/{    printpower($1, 10, 15)};
+	/^[0-9]+[.0-9]?[0-9]*EB$/{    printpower($1, 10, 18)};
+	/^[0-9]+[.0-9]?[0-9]*ZB$/{    printpower($1, 10, 21)};
+	/^[0-9]+[.0-9]?[0-9]*YB$/{    printpower($1, 10, 24)};
+	/.*/{print "Unknown format: " $1; exit 1;}'
+}
+
+# Used by luksextend.sh
+calc_newsize () {
+    # Calculate new image size (if fully inflated)
+    #
+    # Return codes:
+    #  2: too small value
+    #  1: wrong format
+    #  0: all okay
+    #
+    # Return string:
+    # error message,
+    # or number (if input is decimal without extention, will retrun decimal number)
+    local RC=""
+    local cursize="$1" ; local addsize="$2"
+    local newsize="$addsize"
+
+    if [[ "$newsize" =~ ^[+]?[0-9]+%$ ]] ; then
+	newsize=$( echo $newsize | sed -e 's/%$//' )
+	if [[ "$newsize" =~ ^[+] ]] ; then
+	    newsize=$( echo $newsize | sed -e 's/^+//' )
+	    newsize=$((newsize+100))
+	fi
+	if [ $newsize -le 100 ] ; then
+	    echo "Size value too small: $addsize."
+	    return 2
+	fi
+	newsize=$((cursize*newsize/100))
+    elif [[ "$newsize" =~ ^[+]?[0-9]+[cBwb]$ ]] || [[ "$newsize" =~ ^[+]?[0-9]+[.0-9]?[0-9]*[KMGTPEZY](iB)?$ ]] || [[ "$newsize" =~ ^[+]?[0-9]+[.0-9]?[0-9]*[kKMGTPEZY]B$ ]] ; then
+	if [[ "$newsize" =~ ^[+] ]] ; then
+	    newsize=$( echo $newsize | sed -e 's/^+//' )
+	    newsize=$( human_to_number "${newsize}" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$newsize"
+		return $RC
+	    fi
+	    newsize=$((cursize+newsize))
+	else
+	    newsize=$( human_to_number "${newsize}" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$newsize"
+		return $RC
+	    fi
+	    if [ $newsize -le $cursize ] ; then
+		echo "Size value too small: $addsize."
+		return 2
+	    fi
+	fi
+    elif ! [[ "$newsize" =~ ^[0-9]+$ ]] ; then
+	echo "Unsupported format: $addsize"
+	return 1
+    fi
+    echo $newsize
+    return 0
+}
+
+# Used by volume_info()
+disk_free () {
+    # Free disk space
+    #
+    # Return codes:
+    # >0: ?
+    #  0: all okay
+    #
+    # Return string:
+    # information string, colon separated values
+    #   format: <free-num>:<free-human>
+    #     free-num           : free disk space (non-superuser) in numeric value
+    #     free-human         : free disk space (non-superuser) converted to human readable format
+    local volpath="$1"
+
+    local free="$(( $(stat -f -c '%a*%s' -- ${volpath}/.) ))"
+    local freehuman=$( int_to_human $free )
+    echo "${free}:${freehuman}"
+    return 0
+}
+
+# not used for now
+disk_needed () {
+    # Free disk space
+    #
+    # Return codes:
+    # >0: ?
+    #  0: all okay
+    #
+    # Return string:
+    # information string, colon separated values
+    #   format: <free-num>:<free-human>
+    #     free-num           : free disk space (non-superuser) in numeric value
+    #     free-human         : free disk space (non-superuser) converted to human readable format
+    local R="" ; local RC=""
+    local volpath="$1"
+
+    local free="$(( $(stat -f -c '%a*%s' -- ${volpath}/.) ))"
+    local freehuman=$( int_to_human $free )
+    echo "${free}:${freehuman}"
+    return 0
+}
 
 # Used by luksextend.sh
 valid_volume () {
@@ -76,84 +258,39 @@ valid_volume () {
     return 1
 }
 
-# Used by volume_info()
-number_to_human () {
-    local dec=""
-    local number="$1"
-
-    if [ "$(( ${number}/1024*1024 ))" -eq ${number} ] ; then
-	for unit in B K M G T P E Z Y; do
-            if [ $number -lt 1024 ] || [ "$unit" = "Y" ] ; then
-		[ "$dec" = ".00" ] && dec=""
-		echo "${number}${dec}${unit}"
-		break
-            fi
-	    printf -v dec ".%02d" $((number % 1024 * 100 / 1024))
-            number=$((number/1024))
-	done
-    else
-	for unit in B kB MB GB TB PB EB ZB YB; do
-            if [ $number -lt 1000 ] || [ "$unit" = "YB" ] ; then
-		[ "$dec" = ".00" ] && dec=""
-		echo "${number}${dec}${unit}"
-		break
-            fi
-	    printf -v dec ".%02d" $((number % 1000 * 100 / 1000))
-            number=$((number/1000))
-	done
-    fi
-}
-
-human_to_number () {
-    # We use "exit" to only process the first value, otherwise use "next"
-    echo "$1" | awk \
-	'BEGIN{IGNORECASE = 1}
-	function printpower(n,b,p) {printf "%.0f\n", n*b^p; exit;}
-	/[0-9]$/{print $1; exit;};
-	/c$/{printf "%.0f\n", $1; exit;};
-	/w$/{printf "%..f\n", $1; exit;};
-	/b$/{printf "%.0f\n", $1*512; exit;};
-	/K(iB)?$/{printpower($1,  2, 10)};
-	/M(iB)?$/{printpower($1,  2, 20)};
-	/G(iB)?$/{printpower($1,  2, 30)};
-	/T(iB)?$/{printpower($1,  2, 40)};
-	/P(iB)?$/{printpower($1,  2, 50)};
-	/E(iB)?$/{printpower($1,  2, 60)};
-	/Z(iB)?$/{printpower($1,  2, 70)};
-	/Y(iB)?$/{printpower($1,  2, 80)};
-	/KB$/{    printpower($1, 10,  3)};
-	/MB$/{    printpower($1, 10,  6)};
-	/GB$/{    printpower($1, 10,  9)};
-	/TB$/{    printpower($1, 10, 12)};
-	/PB$/{    printpower($1, 10, 15)};
-	/EB$/{    printpower($1, 10, 18)};
-	/ZB$/{    printpower($1, 10, 21)};
-	/YB$/{    printpower($1, 10, 24)};
-	/.*/{print "Error"; exit 1;}'
-}
-
 # Used by luksextend.sh
 volume_info () {
-    # Info about an image file
+    # Info about an image file and free disk space
     #
     # Return codes:
     # >0: ?
     #  0: all okay
     #
     # Return string:
-    # information string
+    # information string, colon separated values
+    #   format: <is-sparse>:<fullsize-num>:<fullsize-human>:<current-size-num>:<current-size-human>:<free-num>:<free-human>
+    #     is-sparse          : 0=not sparse file,
+    #                        : 1=sparse file
+    #     fullsize-num       : non-sparse size in numeric value
+    #     fullsize-human     : non-sparse size converted to human readable format
+    #     current-size-num   : if sparse file, the current used size on disk in numeric value
+    #     current-size-human : if sparse file, the current used size on disk converted to human readable format
+    #     free-num           : free disk space (non-superuser) in numeric value
+    #     free-human         : free disk space (non-superuser) converted to human readable format
     local R="" ; local RC=""
     local used_blocks="" ; local block_size="" ; local file_size=""
     local sparse="" ; local type="" ; local free=""
-    local volume="$1"
+    local volpath="$1"
+    local volume="$2"
 
-    read used_blocks block_size file_size <<<$( stat -c '%b %B %s' -- ${IMAGEPATH}/${volume}.img )
-    [ "$(( ${used_blocks}*${block_size}-${file_size} ))" -lt 0 ] && spares=1 || sparse=0
+    read used_blocks block_size file_size <<<$( stat -c '%b %B %s' -- ${volpath}/${volume}.img )
+    local used_space="$(( ${used_blocks}*${block_size} ))"
+    [ ${used_space} -lt ${file_size} ] && sparse=1 || sparse=0
     [ "$(( ${file_size}/1024*1024 ))" -eq ${file_size} ] && type="KiB" || type="B"
-    free="$(( $(stat -f -c '%a*%s' -- ${IMAGEPATH}/.) ))"
-    filehuman=$( number_to_human $file_size )
-    freehuman=$( number_to_human $free )
-    echo "${spares}:${file_size}:${filehuman}:${type}:${free}:${freehuman}"
+    local filehuman=$( int_to_human $file_size )
+    local usedhuman=$( int_to_human $used_space )
+    local diskfree=$( disk_free ${volpath} )
+    echo "${sparse}:${file_size}:${filehuman}:${type}:${used_space}:${usedhuman}:${diskfree}"
     return 0
 }
 
@@ -260,6 +397,27 @@ check_if_unlocked () {
 }
 
 # Used by luksextend.sh
+lock_volume () {
+    # Lock LUKS volume
+    #
+    # Return codes:
+    # >0: some udisksctl problem
+    #  0: volume locked
+    #
+    # Return string:
+    # nothing or error message from udisksctl
+    local R="" ; local RC=""
+    local luksdev="$1"
+
+    R=$( udisksctl lock -b $luksdev 2>&1 ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "Lock problems: $R"
+	return 1
+    fi
+    return 0
+}
+
+# Used by luksextend.sh
 check_if_mounted () {
     # Check that if the LUKS volume has mounted filesystem
     #
@@ -286,6 +444,26 @@ check_if_mounted () {
     return 0
 }
 
+# Used by luksextend.sh
+unmount_fs () {
+    # Unmount filesystem
+    #
+    # Return codes:
+    # >0: some udisksctl problem
+    #  0: filesystem unmounted
+    #
+    # Return string:
+    # nothing or error message from udisksctl
+    local R="" ; local RC=""
+    local fsdev="$1"
+
+    R=$( udisksctl unmount -b $fsdev 2>&1 ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "Unmount problems: $R"
+	return 1
+    fi
+    return 0
+}
 
 # Not in use, just some concept/documentation
 concept_volume_info () {
