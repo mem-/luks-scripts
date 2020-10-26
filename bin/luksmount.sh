@@ -9,7 +9,7 @@
 #
 # Developed for udisks2 2.8.1-4 (Debian 10.x Buster)
 #
-# Depends: socat, udisks2, yubikey-personalization
+# Depends: udisks2, yubikey-personalization
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
@@ -21,9 +21,6 @@ DEBUG=0
 PHYSDEV=0
 
 [ -f $CONFIG ] && . $CONFIG
-
-# Sleep values when running 'socat' as wrapper for 'udiskctl unlock'
-sleepbefore=2 ; sleepafter=7
 
 if [ "x$1" = "x-v" ] ; then
     DEBUG=1
@@ -90,16 +87,12 @@ do_yubikey () {
     fi
     [ $CONCATENATE -gt 0 ] ; Resp=$pph$Resp
     echo "Unlock of $luksdev will take a number of seconds, standby..."
-    [ $DEBUG -gt 0 ] && echo "Sleep before socat unlocks $loopdev: ${sleepbefore}."
-    [ $DEBUG -gt 0 ] && echo "Sleep adter socat unlocked $loopdev: ${sleepafter}."
-    R=$( (sleep ${sleepbefore}; echo "$Resp"; sleep ${sleepafter}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
+    R=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$Resp" ) ) ; RC=$?
     unset pph ; unset Resp
-    R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
     [ $DEBUG -gt 0 ] && echo "\$R: '$R'"
     if [ "$R" = "Passphrase: " ] ; then
 	echo
 	echo "Passphrase prompt as response from unlock."
-	echo "Variable \$sleepafter probably has to be increased."
 	echo
 	if [ $PHYSDEV -eq 0 ] ; then
 	    echo "Tear down loop device."
