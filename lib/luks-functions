@@ -1,0 +1,588 @@
+# -*- mode: sh -*-
+# Version 1.0 Copyright (c) Magnus (Mem) Sandberg 2020
+# Email: mem (a) datakon , se
+#
+# Created by Mem, 2020-05-06
+
+# Version control of this file
+LUKS_FUNCTIONS_MAJOR="1"
+LUKS_FUNCTIONS_MINOR="4"
+
+## Maybe useful functions
+#info () {
+#    if [ ! "x${LOGFILE}" = "x" ] ; then
+#	echo $* >>${LOGFILE}
+#    else
+#	echo $*
+#    fi
+#}
+#error () {
+#    if [ ! "x${LOGFILE}" = "x" ] ; then
+#	echo $* >>${LOGFILE}
+#    fi
+#    echo >2 $*
+#}
+
+# Used by luksextend.sh, volume_info(), disk_free()
+int_to_human () {
+    # Convert integer number to human readable
+    #
+    # Return codes:
+    #  1: not an integer number
+    #  0: number converted
+    #
+    # Return string:
+    # human readable value
+    local dec=""
+    local int="$1"
+    local format="$2"
+
+    # Return to caller if not an integer
+    [[ "$int" =~ ^[0-9]+$ ]] || return $?
+
+    if [ "$(( ${int} / 1024 * 1024 ))" -eq ${int} ] || [ "xKiB" = "x${format}" ] ; then
+	for unit in B K M G T P E Z Y; do
+            if [ $int -lt 1024 ] || [ "$unit" = "Y" ] ; then
+		[ "$dec" = ".00" ] && dec=""
+		echo "${int}${dec}${unit}"
+		break
+            fi
+	    printf -v dec ".%02d" $(( ${int} % 1024 * 100 / 1024 ))
+            int=$(( ${int} / 1024 ))
+	done
+    else
+	for unit in B kB MB GB TB PB EB ZB YB; do
+            if [ $int -lt 1000 ] || [ "$unit" = "YB" ] ; then
+		[ "$dec" = ".00" ] && dec=""
+		echo "${int}${dec}${unit}"
+		break
+            fi
+	    printf -v dec ".%02d" $(( ${int} % 1000 * 100 / 1000 ))
+            int=$(( ${int} / 1000 ))
+	done
+    fi
+}
+
+# Used by calc_newsize()
+human_to_number () {
+    # Convert human readable to number
+    # Inspired by https://stackoverflow.com/a/31625253
+    #
+    # Return codes:
+    #  1: not a supported input format
+    #  0: number converted
+    #
+    # Return string:
+    # error message,
+    # or number (if input is decimal without extention, will retrun decimal number)
+    local human="$1"
+
+    # We use "exit" to only process the first value, otherwise use "next"
+    # 'IGNORECASE = 1' only works with Gnu's awk
+    echo "$human" | awk \
+	'BEGIN{IGNORECASE = 1}
+	function printpower(n,b,p) {printf "%.0f\n", n*b^p; exit;}
+	/^-[0-9]+[.0-9]?[0-9]*/{print "Negative numbers not supported: " $1; exit 1;};
+	/^[0-9]+c$/{printf "%.0f\n", $1; exit;};
+	/^[0-9]+B$/{printf "%.0f\n", $1; exit;};
+	/^[0-9]+w$/{printf "%..f\n", $1*2; exit;};
+	/^[0-9]+b$/{printf "%.0f\n", $1*512; exit;};
+	/^[0-9]+[.0-9]?[0-9]*$/{printf "%.0f\n", $1; exit;};
+	/^[0-9]+[.0-9]?[0-9]*K(iB)?$/{printpower($1,  2, 10)};
+	/^[0-9]+[.0-9]?[0-9]*M(iB)?$/{printpower($1,  2, 20)};
+	/^[0-9]+[.0-9]?[0-9]*G(iB)?$/{printpower($1,  2, 30)};
+	/^[0-9]+[.0-9]?[0-9]*T(iB)?$/{printpower($1,  2, 40)};
+	/^[0-9]+[.0-9]?[0-9]*P(iB)?$/{printpower($1,  2, 50)};
+	/^[0-9]+[.0-9]?[0-9]*E(iB)?$/{printpower($1,  2, 60)};
+	/^[0-9]+[.0-9]?[0-9]*Z(iB)?$/{printpower($1,  2, 70)};
+	/^[0-9]+[.0-9]?[0-9]*Y(iB)?$/{printpower($1,  2, 80)};
+	/^[0-9]+[.0-9]?[0-9]*kB$/{    printpower($1, 10,  3)};
+	/^[0-9]+[.0-9]?[0-9]*KB$/{    printpower($1, 10,  3)};
+	/^[0-9]+[.0-9]?[0-9]*MB$/{    printpower($1, 10,  6)};
+	/^[0-9]+[.0-9]?[0-9]*GB$/{    printpower($1, 10,  9)};
+	/^[0-9]+[.0-9]?[0-9]*TB$/{    printpower($1, 10, 12)};
+	/^[0-9]+[.0-9]?[0-9]*PB$/{    printpower($1, 10, 15)};
+	/^[0-9]+[.0-9]?[0-9]*EB$/{    printpower($1, 10, 18)};
+	/^[0-9]+[.0-9]?[0-9]*ZB$/{    printpower($1, 10, 21)};
+	/^[0-9]+[.0-9]?[0-9]*YB$/{    printpower($1, 10, 24)};
+	/.*/{print "Unknown format: " $1; exit 1;}'
+}
+
+# Used by luksextend.sh
+calc_newsize () {
+    # Calculate new image size (if fully inflated)
+    #
+    # Return codes:
+    #  2: too small value
+    #  1: wrong format
+    #  0: all okay
+    #
+    # Return string:
+    # error message,
+    # or number (if input is decimal without extention, will retrun decimal number)
+    local RC=""
+    local cursize="$1" ; local addsize="$2"
+    local newsize="$addsize"
+
+    if [[ "$newsize" =~ ^[+]?[0-9]+%$ ]] ; then
+	newsize=$( echo $newsize | sed -e 's/%$//' )
+	if [[ "$newsize" =~ ^[+] ]] ; then
+	    newsize=$( echo $newsize | sed -e 's/^+//' )
+	    newsize=$(( ${newsize} + 100 ))
+	fi
+	if [ $newsize -le 100 ] ; then
+	    echo "Size value too small: $addsize."
+	    return 2
+	fi
+	newsize=$(( ${cursize} * ${newsize} / 100 ))
+    elif [[ "$newsize" =~ ^[+]?[0-9]+[cBwb]$ ]] || [[ "$newsize" =~ ^[+]?[0-9]+[.0-9]?[0-9]*[KMGTPEZY](iB)?$ ]] || [[ "$newsize" =~ ^[+]?[0-9]+[.0-9]?[0-9]*[kKMGTPEZY]B$ ]] ; then
+	if [[ "$newsize" =~ ^[+] ]] ; then
+	    newsize=$( echo $newsize | sed -e 's/^+//' )
+	    newsize=$( human_to_number "${newsize}" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$newsize"
+		return $RC
+	    fi
+	    newsize=$(( ${cursize} + ${newsize} ))
+	else
+	    newsize=$( human_to_number "${newsize}" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$newsize"
+		return $RC
+	    fi
+	    if [ $newsize -le $cursize ] ; then
+		echo "Size value too small: $addsize."
+		return 2
+	    fi
+	fi
+    elif ! [[ "$newsize" =~ ^[0-9]+$ ]] ; then
+	echo "Unsupported format: $addsize"
+	return 1
+    fi
+    echo $newsize
+    return 0
+}
+
+# Used by volume_info()
+disk_free () {
+    # Free disk space
+    #
+    # Return codes:
+    # >0: ?
+    #  0: all okay
+    #
+    # Return string:
+    # information string, colon separated values
+    #   format: <free-num>:<free-human>
+    #     free-num           : free disk space (non-superuser) in numeric value
+    #     free-human         : free disk space (non-superuser) converted to human readable format
+    local volpath="$1"
+    local numberformat="$2"
+
+    local free="$(( $(stat -f -c '%a*%s' -- ${volpath}/.) ))"
+    local freehuman=$( int_to_human $free $numberformat )
+    echo "${free}:${freehuman}"
+    return 0
+}
+
+# Used by luksextend.sh
+valid_volume () {
+    # Check if volume (file)name is valid
+    #
+    # Return codes:
+    # 10: dangerous filename
+    #  7: filename is okay but is not a reglular file
+    #  5: non-existing block device
+    #  1: filename is okay but file not created yet
+    #  0: filename is okay and regular file found
+    #
+    # Return string:
+    # error message,
+    # or volume (file)name, trailing ".img" removed
+    local volume="$1"
+
+    if echo $volume | grep "\.\." >/dev/null ; then
+	echo "Dangerous filename including '..': $volume"
+	return 10
+    elif echo $volume | grep "\./" >/dev/null ; then
+	echo "Un-supported filename including './': $volume"
+	return 10
+    elif echo $volume | grep " " >/dev/null ; then
+	echo "Un-supported filename including ' ' (space char): $volume"
+	return 10
+    fi
+    if echo $volume | grep "^/dev/" >/dev/null ; then
+	if [ -b $volume ] ; then
+	    echo ${volume}
+	    return 0
+	else
+	    echo "Device ${volume} doesn't exists or is not a block device."
+	    return 5
+	fi
+    else
+	if echo $volume | grep "/" >/dev/null ; then
+	    echo "Un-supported filename including '/': $volume"
+	    echo "No path under or outside $IMAGEPATH supported!"
+	    return 10
+	fi
+	volume=$( echo $volume | sed -e 's/\.img$//' )
+	if [ -f ${IMAGEPATH}/${volume}.img ] ; then
+	    echo $volume
+	    return 0
+	elif [ -e ${IMAGEPATH}/${volume}.img ] ; then
+	    echo "File ${volume}.img is not a regular file."
+	    return 7
+	fi
+    fi
+    echo $volume
+    return 1
+}
+
+# Used by luksextend.sh
+volume_info () {
+    # Info about an image file and free disk space
+    #
+    # Return codes:
+    # >0: ?
+    #  0: all okay
+    #
+    # Return string:
+    # information string, colon separated values
+    #   format: <is-sparse>:<fullsize-num>:<fullsize-human>:<current-size-num>:<current-size-human>:<free-num>:<free-human>
+    #     is-sparse          : 0=not sparse file,
+    #                        : 1=sparse file
+    #     fullsize-num       : non-sparse size in numeric value
+    #     fullsize-human     : non-sparse size converted to human readable format
+    #     current-size-num   : if sparse file, the current used size on disk in numeric value
+    #     current-size-human : if sparse file, the current used size on disk converted to human readable format
+    #     free-num           : free disk space (non-superuser) in numeric value
+    #     free-human         : free disk space (non-superuser) converted to human readable format
+    local R="" ; local RC=""
+    local used_blocks="" ; local block_size="" ; local file_size=""
+    local sparse="" ; local type="" ; local free=""
+    local volpath="$1"
+    local volume="$2"
+
+    read used_blocks block_size file_size <<<$( stat -c '%b %B %s' -- ${volpath}/${volume}.img )
+    local used_space="$(( ${used_blocks}*${block_size} ))"
+    [ ${used_space} -lt ${file_size} ] && sparse=1 || sparse=0
+    [ "$(( ${file_size}/1024*1024 ))" -eq ${file_size} ] && type="KiB" || type="B"
+    local filehuman=$( int_to_human $file_size $type )
+    local usedhuman=$( int_to_human $used_space $type )
+    local diskfree=$( disk_free ${volpath} $type )
+    echo "${sparse}:${file_size}:${filehuman}:${type}:${used_space}:${usedhuman}:${diskfree}"
+    return 0
+}
+
+# Used by luksextend.sh
+setup_loopdevice () {
+    # Set up loop device for volume file
+    #
+    # Return codes:
+    # >0: some loop device set up problem
+    #  0: loop device now set up
+    #
+    # Return string:
+    # error message,
+    # or state:loop-devide
+    #
+    # state:
+    #  0: new set up of loop device
+    #  1: previous setup of loop device
+    local R="" ; local RC=""
+    local volume="$1"
+    local loopdev=""
+
+    R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
+    if [ $RC -eq 0 ] ; then
+	loopdev="1:$( echo $R | awk '{ print $1 }' )"
+    else
+	R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R"
+	    return $RC
+	fi
+	loopdev="0:$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )"
+    fi
+    echo $loopdev
+    return 0
+}
+
+# Used by luksextend.sh
+teardown_loopdevice () {
+    # Tear down loop device
+    #
+    # Return codes:
+    # >0: some udisksctl problem
+    #  0: loop device teared down
+    #
+    # Return string:
+    # any output from udisksctl
+    local R="" ; local RC=""
+    local loopdev="$1"
+
+    R=$( udisksctl loop-delete -b $loopdev ) ; RC=$?
+    echo "$R"
+    return $RC
+}
+
+# Used by luksextend.sh
+check_if_luks_volume () {
+    # Check that it is a LUKS volume
+    # alternative command (as root): "cryptsetup isLuks $luksdev"
+    #
+    # Return codes:
+    # >1: The return code from udisksctl
+    #  1: Either not LUKS volume or error from udisksctl
+    #  0: LUKS volume found
+    #
+    # Return string:
+    # IdType or error message from udisksctl
+    local R="" ; local RC=""
+    local luksdev="$1"
+
+    R=$( udisksctl info -b ${luksdev} | grep IdType | awk '{ print $2 }' ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R" ; return $RC
+    fi
+    if [ "X$R" != "Xcrypto_LUKS" ] ; then
+	R="Not a LUKS volume."
+	RC=1
+    fi
+    echo "$R"
+    return $RC
+}
+
+# Used by luksextend.sh
+check_if_unlocked () {
+    # Check that if the LUKS volume is unlocked
+    #
+    # Return codes:
+    #  1: not unlocked
+    #  0: LUKS volume is unlocked
+    #
+    # Return string:
+    # filesystem device or error message from udisksctl
+    local R="" ; local RC=""
+    local luksdev="$1"
+
+    local device=$( echo $luksdev | sed -e 's#.*/##' )
+    R=$( udisksctl dump | egrep '( | CryptoBacking)Device: ' | grep -A1 "CryptoBackingDevice:.*/${device}" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "LUKS volume not unlocked." ; return $RC
+    fi
+    # Retrun the 4th value as filesystem device
+    echo $R | awk '{ print $4 }'
+    return 0
+}
+
+# Used by luksextend.sh
+unlock_volume () {
+    # Unlock LUKS volume
+    #
+    # Return codes:
+    # >0: some udisksctl problem
+    #  0: volume locked
+    #
+    # Return string:
+    # nothing or error message from udisksctl
+    local Ru="" ; local Eu="" ; local RC=""
+    local resp="";
+    local returnvar="$1"
+    local luksdev="$2"
+
+    Ru=$( check_if_unlocked "${luksdev}" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	do_yubikey resp ; RC=$?
+	if [ $RC -eq 2 ] || [ $RC -eq 3 ]; then
+	    echo "No configured YubiKey (slot ${YKSLOT}) found."
+	    read -p "Continue without YubiKey (y/N): " Ru
+	    case $Ru in
+		y|Y|[yY][eE][sS])
+		    echo
+		    echo "No configured YubiKey (slot ${YKSLOT}) found, will use static passphrase."
+		    capture_outputs Ru Eu udisksctl unlock -b $luksdev ; RC=$?
+		    if [ $RC -gt 0 ] ; then
+			printf -v "$returnvar" '%s' "Could not unlock volume, maybe wrong passphrase."
+			return $RC
+		    fi
+		    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
+		    ;;
+		*)
+		    do_yubikey resp ; RC=$?
+		    if [ $RC -gt 0 ] ; then
+			printf -v "$returnvar" '%s' "${resp}."
+			return $RC
+		    fi
+		    echo "Unlock of $luksdev will take a number of seconds, standby..."
+		    # https://unix.stackexchange.com/questions/447615/provide-password-to-udisks-to-unlock-luks-encrypted-device
+		    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$resp" ) ) ; RC=$?
+		    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
+		    ;;
+	    esac
+	else
+	    echo "Unlock of $luksdev will take a number of seconds, standby..."
+	    # https://unix.stackexchange.com/questions/447615/provide-password-to-udisks-to-unlock-luks-encrypted-device
+	    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$resp" ) ) ; RC=$?
+	    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
+	fi
+    else
+	fsdev="$Ru"
+	[ $DEBUG -gt 0 ] && echo "LUKS volume already unlocked."
+    fi
+    printf -v "$returnvar" '%s' "${fsdev}"
+    return 0
+}
+
+# Used by luksextend.sh
+lock_volume () {
+    # Lock LUKS volume
+    #
+    # Return codes:
+    # >0: some udisksctl problem
+    #  0: volume locked
+    #
+    # Return string:
+    # nothing or error message from udisksctl
+    local R="" ; local RC=""
+    local luksdev="$1"
+
+    R=$( udisksctl lock -b $luksdev 2>&1 ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "Lock problems: $R"
+	return 1
+    fi
+    return 0
+}
+
+# Used by luksextend.sh
+check_if_mounted () {
+    # Check that if the LUKS volume has mounted filesystem
+    #
+    # Return codes:
+    #  5: not mounted
+    #  1: df don't find the device
+    #  0: LUKS volume has mounted filesystem
+    #
+    # Return string:
+    # filesystem mountpoint
+    local R="" ; local RC=""
+    local fsdev="$1"
+
+    R=$( df --output=target ${fsdev} ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R" ; return $RC
+    fi
+    local filesys=$( echo $R | awk '{ print $3 }' )
+    if [ "x$filesys" = "x/dev" ] ; then
+	echo "Filesystem not mounted."
+	return 5
+    fi
+    echo $filesys
+    return 0
+}
+
+# Used by luksextend.sh
+unmount_fs () {
+    # Unmount filesystem
+    #
+    # Return codes:
+    # >0: some udisksctl problem
+    #  0: filesystem unmounted
+    #
+    # Return string:
+    # nothing or error message from udisksctl
+    local R="" ; local RC=""
+    local fsdev="$1"
+
+    R=$( udisksctl unmount -b $fsdev 2>&1 ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "Unmount problems: $R"
+	return 1
+    fi
+    return 0
+}
+
+# Not in use, just some concept/documentation
+concept_volume_info () {
+    echo
+    echo 'LUKS header offset and data size: /usr/sbin/cryptsetup luksDump /dev/loopX | grep -A5 "^Data segments" | egrep "(offset|length):"'
+    echo
+    echo 'FS-size: /usr/sbin/tune2fs -l /dev/dm-X | egrep "Block (count|size):"'
+    echo 'For the moment used size: "Block size" * "Block count" + "Data segment offset"'
+}
+
+# Used by do_yubikey()
+capture_outputs () {
+    # This doesn't work with interactive commands as regular prompts or requests for
+    # input uses STDERR for prompting.
+    #
+    # The following is very Bash specific and has its flaws;
+    # - outputs longer that 1008 bytes may not be catched correctly due to buffer sizes
+    # - the use of 'eval' is always risky, can execute variables as code, etc
+
+    # https://stackoverflow.com/questions/11027679/capture-stdout-and-stderr-into-different-variables/11027843#11027843
+    # referenced from https://stackoverflow.com/questions/13806626/capture-both-stdout-and-stderr-in-bash
+    #
+    # other useful
+    # https://stackoverflow.com/questions/3130375/bash-script-store-stderr-in-a-variable
+    # https://stackoverflow.com/questions/962255/how-to-store-standard-error-in-a-variable
+    # (with a lot of interesting examples)
+    # and maybe also https://stackoverflow.com/questions/32890389/can-you-redirect-stderr-for-an-entire-bash-session
+
+    local resp="$1" ; local error="$2" ; shift 2
+    local t_std="" ; local t_err="" ; local t_ret=0
+
+    eval "$( eval "$@" \
+        2> >(t_err=$(cat); declare -p t_err) \
+         > >(t_std=$(cat); declare -p t_std); \
+             t_ret=$?; declare -p t_ret )"
+
+    printf -v "$resp" '%s' "$t_std"
+    printf -v "$error" '%s' "$t_err"
+    return $t_ret
+}
+
+# Used by luksextend.sh
+do_yubikey () {
+    # Handle challange-response for YubiKey
+    #
+    # Return codes:
+    #  3: YubiKey missing
+    #  2: YubiKey slot not configured
+    #  1: Error from YubiKey command
+    #  0: response stored in return variable
+    #
+    # Return string:
+    # challenge-response string or error message
+    local Ry="" ; local Ey="" ; local RC=""
+    local pph=""
+    local returnvar="$1"
+
+    capture_outputs Ry Ey ykinfo -q -${YKSLOT} ; RC=$?
+    if [ $RC -eq 0 ] && [ $Ry -eq 1 ]; then
+	[ $DEBUG -gt 0 ] && echo "Found attached YubiKey, will try challenge-response."
+
+	read -s -p "Enter YubiKey challenge: " pph ; echo
+	[ $HASH -gt 0 ] && pph=$(printf %s "$pph" | sha256sum | awk '{print $1}')
+	echo "Sending challenge to YubiKey, press button if blinking."
+	capture_outputs Ry Ey ykchalresp -${YKSLOT} "$pph" ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    unset pph ; unset Ry
+	    printf -v "$returnvar" '%s' "Maybe missing or wrong config (slot ${YKSLOT}): ${Ey}."
+	    return 1
+	fi
+	[ $CONCATENATE -gt 0 ] ; Ry=$pph$Ry
+	# about dynamic/pointer variables, including "Risks" section
+	# see https://stackoverflow.com/questions/16553089/dynamic-variable-names-in-bash
+	printf -v "$returnvar" '%s' "${Ry}"
+	unset pph ; unset Ry
+	return 0
+    elif [ $RC -eq 0 ] && [ $Ry -eq 0 ]; then
+	printf -v "$returnvar" '%s' "YubiKey found but slot ${YKSLOT} not configured."
+	return 2
+    else
+	printf -v "$returnvar" '%s' "${Ey}."
+	return 3
+    fi
+}
