@@ -11,7 +11,7 @@
 #
 # Developed for udisks2 2.8.1-4 (Debian 10.x Buster)
 #
-# Depends Debian packages:    socat, udisks2, yubikey-personalization (need when using YubiKey)
+# Depends Debian packages: udisks2, yubikey-personalization (need when using YubiKey)
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
@@ -21,24 +21,39 @@ SPARSE=0
 SUCMD="su --login -c"
 IMAGEPATH="$HOME/.images"
 CONFIG=$HOME/.config/luks-mgmt.conf
+FIX=0
 DEBUG=0
 PHYSDEV=0
-# Sleep values when running 'socat' as wrapper for 'udiskctl unlock'
-SLEEPBEFORE=2 ; SLEEPAFTER=5
+#
+loop_state=0
+fsdev_state=0
+filesys_state=0
 
 [ -f $CONFIG ] && . $CONFIG
 
 if [ "x$1" = "x-v" ] ; then
     DEBUG=1
     shift
+    if [ "x$1" = "x-f" ] ; then
+	FIX=1
+	shift
+    fi
+elif [ "x$1" = "x-f" ] ; then
+    FIX=1
+    shift
+    if [ "x$1" = "x-v" ] ; then
+	DEBUG=1
+	shift
+    fi
 fi
 
 if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     echo
-    echo "Usage: $0 [-h] [-v] <volume> [<size>]"
+    echo "Usage: $0 [-h] [-v] [-f] <volume> [<size>]"
     echo
     echo " -h       : Show this help text"
     echo " -v       : Verbose mode"
+    echo " -f       : Fix steps that wasn't done during previous run"
     echo
     echo " <volume> : The volume filename to be extended, with or without '.img' extension"
     echo "          : volume should be located in ${IMAGEPATH}/"
@@ -57,6 +72,11 @@ if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     echo "          : When using '+' prefix the new size is not an absolute size, then it"
     echo "          : indicates how much the volume should be extended."
     echo "          :"
+    echo "          : When using '%' suffix the new size will be calcutated relative to"
+    echo "          : the current size. '120%' is equal of '+20%'."
+    echo "          : The size can only be increased, values below 100% or negative"
+    echo "          : will be ignored."
+    echo "          :"
     echo "          : If the size value is ombitted, you will be asked for new size when"
     echo "          : managing an image file."
     echo
@@ -65,11 +85,6 @@ fi
 
 if ! which udisksctl >/dev/null 2>&1 ; then
     echo "This script needs 'udisksctl' command (Debian package: udisks2), exiting."
-    exit 1
-fi
-
-if ! which socat >/dev/null 2>&1 ; then
-    echo "This script needs 'socat' command (Debian package: socat), exiting."
     exit 1
 fi
 
@@ -99,7 +114,9 @@ else
 	exit 1
     fi
 fi
+[ $DEBUG -gt 0 ] && [ $FIX -gt 0 ] && echo "Fix mode active."
 [ $DEBUG -gt 0 ] && echo
+addsize="$2"
 
 # Validate volume (file) name
 R=$( valid_volume "$1" ) ; RC=$?
@@ -145,12 +162,73 @@ if [ $RC -gt 0 ] ; then
 fi
 [ $DEBUG -gt 0 ] && echo "Is a LUKS volume type: $R"
 
-R=$( volume_info "${volume}" ) ; RC=$?
+R=$( volume_info "${IMAGEPATH}" "${volume}" ) ; RC=$?
 if [ $RC -gt 0 ] ; then
     echo "$R" ; exit $RC
 fi
 volinfo="$R"
 [ $DEBUG -gt 0 ] && echo -e "Volume info: ${volinfo}.\n"
+read vol_sparse volsize_real volsize_human volsize_type volused_real volused_human diskfree_real diskfree_human <<<$( IFS=":"; echo $volinfo )
+
+if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
+    if [ "x" = "x${addsize}" ] ;then
+	echo "No new size was givven. Please enter new size in absolute or relative format."
+	read -p "(current volume size ${volsize_human}): " addsize
+	if [ "x" = "x${addsize}" ] ;then
+	    echo "No size was entered, exiting!"
+	    exit 1
+	fi
+    fi
+    R=$( calc_newsize "${volsize_real}" "${addsize}" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R" ; exit $RC
+    fi
+    newsize="$R"
+    addsize=$(( ${newsize} - ${volsize_real} ))
+    newsize_human=$( int_to_human "$newsize" "$volsize_type" ) ; RC=$?
+    newsize_human2=$( int_to_human "$newsize" "" ) ; RC=$?
+    addsize_human=$( int_to_human "$addsize" "" ) ; RC=$?
+    echo -n "New size: ${newsize_human}" ; [ "${volsize_type}" = "KiB" ] && echo -n "iB"
+    [ "x${newsize_human}" = "x${newsize_human2}" ] && echo "." || echo " / ${newsize_human2}."
+    [ $DEBUG -gt 0 ] && echo "Addition size: ${addsize} / ${addsize_human}."
+
+    # Needed diskspace
+    neededspace=$(( ${newsize} - ${volused_real} ))
+    if [ $neededspace -ge $diskfree_real ] ;then
+	if [ $SPARSE -eq 0 ] && [ $vol_sparse -eq 0 ] ; then
+	    echo "Not enough space for new size, exiting."
+	    if [ $loop_state -eq 0 ] ; then
+		[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+		R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+		if [ $RC -gt 0 ] ; then
+		    echo "$R" ; exit $RC
+		fi
+	    fi
+	    exit 1
+	else
+	    echo
+	    echo "The the total size exceeds available disk space."
+	    echo "With sparse file it may be okay to overbook disk space."
+	fi
+    fi
+    read -p "Continue (y/N): " R
+    case $R in
+	y|Y|[yY][eE]|[sS])
+	    [ $DEBUG -gt 0 ] && echo "Continuing..."
+	    ;;
+	*)
+	    echo "Aborting..."
+	    if [ $loop_state -eq 0 ] ; then
+		[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+		R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+		if [ $RC -gt 0 ] ; then
+		    echo "$R" ; exit $RC
+		fi
+	    fi
+	    exit 1
+	    ;;
+    esac
+fi
 
 # Chech if unlocked
 R=$( check_if_unlocked "${luksdev}" ) ; RC=$?
@@ -158,9 +236,11 @@ if [ $RC -gt 0 ] ; then
     # We continue even when not unlocked
     #echo "$R" ; exit $RC
     [ $DEBUG -gt 0 ] && echo "$R"
+    fsdev_state=0
     fsdev=""
     filesys=""
 else
+    fsdev_state=1
     fsdev="$R"
     [ $DEBUG -gt 0 ] && echo "LUKS volume unlocked as ${fsdev}."
 
@@ -169,253 +249,242 @@ else
     if [ $RC -eq 5 ] ; then
 	# not mounted
 	[ $DEBUG -gt 0 ] && echo "$R"
+	filesys_state=0
 	filesys=""
     elif [ $RC -gt 0 ] ; then
 	echo "$R" ; exit $RC
     else
+	filesys_state=1
 	filesys="$R"
 	[ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${filesys}."
     fi
 fi
-[ $DEBUG -gt 0 ] && echo ""
 
-if [ "x" != "x${luksdev}" ] || [ "x" != "x${fsdev}" ] || [ "x" != "x${filesys}" ] ; then
+# Unmount
+if [ "x" != "x${fsdev}" ] || [ "x" != "x${filesys}" ] ; then
     echo "For now $( basename $( readlink -f ${BASH_SOURCE[0]} ) ) only supports off-line mode."
+
+    read -p "Continue to bring ${volume} offline or quit (c/Q): " R
+    case $R in
+	n|N|q|Q|[nN][oO])
+	    echo "Aborting..."
+	    exit 1
+	    ;;
+	c|C|y|Y|[yY][eE][sS])
+	    [ $DEBUG -gt 0 ] && echo "Continuing..."
+	    ;;
+	*)
+	    echo "Aborting..."
+	    exit 1
+	    ;;
+    esac
+
+    if [ "x" != "x${filesys}" ] ; then
+	[ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${filesys}, un-mounting."
+	R=$( unmount_fs "${fsdev}" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R"
+	fi
+    fi
+    # In "FIX" mode, we doesn't need to look the volume
+    if [ "x" != "x${fsdev}" ] && [ $FIX -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+	R=$( lock_volume "${luksdev}" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R"
+	fi
+    fi
 fi
 
-echo "Test ended"
-exit
+# Do all the things related to the image file,
+# unless in "FIX" mode as we assume the image file already extended and then loop device in place
+if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
+    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+    R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R" ; exit $RC
+    fi
 
-# Make sure the volume is not mounted
-#echo "Unmounting ${volume}, if in use"
-#luksunmount $volume
-
-echo
-echo "ENDING"
-exit
-
-
-if [ $PHYSDEV -eq 0 ] ; then
-    echo "Extending LUKS volume in image file ${IMAGEPATH}/${volume}.img"
-    read -p "Enter image size in 'dd' format (512M, 1G, etc): " R
-    if [ $SPARSE -gt 0 ] ; then
-	# Using 'if [[ ]]' as case statements doesn't do regex
-	if [[ "$R" =~  ^[0-9]+$ ]] ||
-	       [[ "$R" =~ ^[0-9]+c$ ]] ||
-	       [[ "$R" =~ ^[0-9]+w$ ]] ||
-	       [[ "$R" =~ ^[0-9]+b$ ]] ||
-	       [[ "$R" =~ ^[0-9]+[kMGTPEZY]B$ ]] ||
-	       [[ "$R" =~ ^[0-9]+[KMGTPEZY]$ ]] ; then
-	    BS=1
-	else
-	    echo "Unknown size value for 'dd': $R"
-	    cleanup_tmp
-	    exit 1
-	fi
-	[ $DEBUG -gt 0 ] && echo "Block size for dd: $BS"
-	[ $DEBUG -gt 0 ] && echo "Number of blocks to create: $R"
+    # Go for sparse file if config says so of if volume is a sprase file
+    if [ $SPARSE -gt 0 ] || [ $vol_sparse -gt 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Extending ${IMAGEPATH}/${volume}.img to new size (sparse mode): $newsize"
 
 	if [ $DEBUG -gt 0 ] ; then
-	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$R
+	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=1 count=0 seek=$newsize
 	else
-	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$R 2>&1 | egrep -v ' records | copied, '
+	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=1 count=0 seek=$newsize 2>&1 | egrep -v ' records | copied, '
 	fi
     else
-	# Using 'if [[ ]]' as case statements doesn't do regex
-	if [[ "$R" =~  ^[0-9]+$ ]] ||
-	  [[ "$R" =~ ^[0-9]+c$ ]] ||
-	  [[ "$R" =~ ^[0-9]+w$ ]] ; then
-	    BS=1
-	elif [[ "$R" =~ ^[0-9]+b$ ]] ; then
-	    BS=512
-	    R=$( echo $R | tr -d 'b' )
-	elif [[ "$R" =~ ^[0-9]+[kMGTPEZY]B$ ]] ; then
+	# Check if size in MiB
+	if [ "$(( ${addsize} / 1048576 * 1048576 ))" -eq ${addsize} ] ; then
+	    BS=1M
+	    addsize=$(( ${addsize} / 1048576 ))
+	elif [ "$(( ${addsize} / 1000000 * 1000000 ))" -eq ${addsize} ] ; then
+	    BS=1MB
+	    addsize=$(( ${addsize} / 1000000 ))
+	elif [ "$(( ${addsize} / 4096 * 4096 ))" -eq ${addsize} ] ; then
+	    BS=4K
+	    addsize=$(( ${addsize} / 4096 ))
+	elif [ "$(( ${addsize} / 1024 * 1024 ))" -eq ${addsize} ] ; then
+	    BS=1K
+	    addsize=$(( ${addsize} / 1024 ))
+	elif [ "$(( ${addsize} / 1000 * 1000 ))" -eq ${addsize} ] ; then
 	    BS=1000
-	    R=$( echo $R | sed -e 's/kB$//' | tr 'MGTPEZY' 'kMGTPEZ' )
-	elif [[ "$R" =~ ^[0-9]+[KMGTPEZY]$ ]] ; then
-	    BS=1024
-	    R=$( echo $R | tr -d 'K' | tr 'MGTPEZY' 'KMGTPEZ' )
+	    addsize=$(( ${addsize} / 1000 ))
+	elif [ "$(( ${addsize} / 512 * 512 ))" -eq ${addsize} ] ; then
+	    BS=512
+	    addsize=$(( ${addsize} / 512 ))
 	else
-	    echo "Unknown size value for 'dd': $R"
-	    cleanup_tmp
-	    exit 1
+	    BS=1
 	fi
 	[ $DEBUG -gt 0 ] && echo "Block size for dd: $BS"
-	[ $DEBUG -gt 0 ] && echo "Number of blocks to create: $R"
+	[ $DEBUG -gt 0 ] && echo "Number of blocks to create: $addsize"
 
 	if [ $DEBUG -gt 0 ] ; then
-	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=$R
+	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img conv=notrunc oflag=append bs=$BS count=$addsize
 	else
-	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=$R 2>&1 | egrep -v ' records | copied, '
+	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img conv=notrunc oflag=append bs=$BS count=$addsize 2>&1 | egrep -v ' records | copied, '
 	fi
     fi
-else
-    echo
-    echo " !!!"
-    echo " !!! ALL DATA ON DEVICE $volume WILL BE ERASED"
-    echo " !!!"
-    echo " !!! Enter 'Yes' in uppercase to continue."
-    echo " !!!"
 
-    read -p "Continue: " R
-    case $R in
-	YES)
-	    [ $DEBUG -gt 0 ] && echo "Continuing."
-	    ;;
-	*)
-	    echo "You didn't answer 'YES', exiting."
-	    cleanup_tmp
-	    exit
-	    ;;
-    esac
-
-    echo
-    echo " >>>"
-    echo " >>> Really overwrite $volume ?"
-    echo " >>>"
-    echo " >>> Enter 'Yes' in uppercase once more to continue."
-    echo " >>>"
-
-    read -p "Continue: " R
-    case $R in
-	YES)
-	    [ $DEBUG -gt 0 ] && echo "Continuing."
-	    ;;
-	*)
-	    echo "You didn't answer 'YES', exiting."
-	    cleanup_tmp
-	    exit
-	    ;;
-    esac
-    echo
-fi
-
-if [ $PHYSDEV -eq 0 ] ; then
-    echo
-    echo "Select preferred mount-name, usually mounted under /media/$USER/, like /media/$USER/$volume"
-    echo "The mount-name can be changed by root with 'tune2fs -L <new-name> <dev>' where <dev> usually is something like /dev/dm-X."
-    read -p "Enter mount-name (default: $volume): " label
-    [ -z $label ] && label=$volume
-else
-    echo
-    echo "Select preferred mount-name, usually mounted under /media/$USER/, like /media/$USER/USB-encrypted"
-    echo "The mount-name can be changed by root with 'tune2fs -L <new-name> <dev>' where <dev> usually is something like $volume."
-    read -p "Enter mount-name (default: USB-encrypted): " label
-    [ -z $label ] && label="USB-encrypted"
-fi
-
-
-echo
-echo "OLD: Preparing for password generation and optional print-out."
-echo
-echo "OLD: Use YubiKey with Challenge-Response (Y/n): "
-
-
-if [ $PHYSDEV -eq 0 ] ; then
-    [ $DEBUG -gt 0 ] && echo -e "\nSetting up loopback device"
-    R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
-    [ $RC -gt 0 ] && exit $RC
-    loopdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
-    [ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}."
+    R=$( setup_loopdevice "${volume}" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R" ; exit $RC
+    fi
+    read R loopdev <<<$( IFS=":"; echo $R )
+    [ $DEBUG -gt 0 ] && echo "Image file re-attached to loop device: ${loopdev}."
     luksdev=$loopdev
-    lukslabel="luks_img-$volume"
-else
-    luksdev=$volume
-    lukslabel="luks-$label"
 fi
 
-echo -e "\nCreating LUKS volume."
-if [ $STATICPW -gt 0 ] ; then
-    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-    # The first arg to 'printf' should be without '\n' otherwise the password will include NEWLINE
-    $SUCMD "printf '%s' \"$( cat $tempdir/args.txt )\" | cryptsetup --label $lukslabel --key-file - luksFormat $luksdev" ; RC=$?
-    [ $RC -eq 1 ] && echo -n "Something went wrong, did you miss to write 'yes' in uppercase?"
-    if [ $RC -gt 0 ] ; then
-	echo -e "\nCould not create LUKS volume, exiting."
-	unset Resp ; unset PW1
-	if [ $PHYSDEV -eq 0 ] ; then
-	    [ $DEBUG -gt 0 ] && echo "Tear down loop device."
-	    udisksctl loop-delete -b $loopdev
-	    rm ${IMAGEPATH}/${volume}.img
-	fi
-	cleanup_tmp
-	exit $RC
-    fi
-    if [ $CHALRESP -gt 0 ] ; then
-	echo -e "\nAdding Challenge-Response to LUKS volume."
-	echo "$Resp" >> $tempdir/args.txt
-	echo "$Resp" >> $tempdir/args.txt
-	if [ ! -z $SLOT ] && [ $SLOT -gt 0 ] ; then
-	    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-	    $SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup --key-slot=$SLOT luksAddKey $luksdev" ; RC=$?
-	else
-	    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-	    $SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup luksAddKey $luksdev" ; RC=$?
-	fi
-    fi
-    [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
-    [ $DEBUG -gt 0 ] && echo "Sleep before socat unlocks $loopdev: ${SLEEPBEFORE}."
-    [ $DEBUG -gt 0 ] && echo "Sleep adter socat unlocked $loopdev: ${SLEEPAFTER}."
-    R=$( (sleep ${SLEEPBEFORE}; echo "$PW1"; sleep ${SLEEPAFTER}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
-    R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
-    unset PW1 ; unset Resp
-else
-    echo "$Resp" > $tempdir/args.txt
-    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-    # The first arg to 'printf' should be without '\n' otherwise the password will include NEWLINE
-    $SUCMD "printf '%s' \"$( cat $tempdir/args.txt )\" | cryptsetup --label $lukslabel --key-file - luksFormat $luksdev" ; RC=$?
-    [ $RC -eq 1 ] && echo -n "Something went wrong, did you miss to write 'yes' in uppercase?"
-    if [ $RC -gt 0 ] ; then
-	echo -e "\nCould not create LUKS volume, exiting."
-	unset Resp
-	if [ $PHYSDEV -eq 0 ] ; then
-	    [ $DEBUG -gt 0 ] && echo "Tear down loop device."
-	    udisksctl loop-delete -b $loopdev
-	    rm ${IMAGEPATH}/${volume}.img
-	fi
-	cleanup_tmp
-	exit $RC
-    fi
-    [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
-    R=$( (sleep ${SLEEPBEFORE}; echo "$Resp"; sleep ${SLEEPAFTER}) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
-    R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
-    unset Resp
-fi
-[ $RC -gt 0 ] && exit $RC   # unlock failed...
-fsdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
-[ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}."
-echo
-
-echo "Creating filesystem in LUKS volume."
-echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-R=$( $SUCMD "mke2fs -t ext4 -L $label $fsdev 2>&1" ) ; RC=$?
+unlock_volume R $luksdev ; RC=$?
 if [ $RC -gt 0 ] ; then
-    echo -e "\nSomething went wrong with 'mke2fs':"
-    echo "Output from mke2fs (newlines stipped off):"
-    echo $R
-    echo
-    if [ $PHYSDEV -eq 0 ] ; then
-	udisksctl lock -b $luksdev
-	udisksctl loop-delete -b $loopdev
+    echo "$R"
+    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R" ; exit $RC
+	fi
     fi
-    cleanup_tmp
+    exit $RC
+fi
+fsdev="$R"
+[ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}."
+
+
+# As I understand 'cryptsetup -v resize $fsdev' isn't nesessary as it only updates mapping info if needed
+# From man page:
+#     Note  that  this  does  not change the raw device geometry,
+#     it just changes how many sectors of the raw device are represented in the mapped device.
+
+
+echo "Checking filesystem before resizing it."
+echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
+# Maybe replace 'y' with 'p' if spanwing "$SYCMD" as interactive command
+R=$( $SUCMD "fsck -fvy $fsdev 2>&1" ) ; RC=$?
+if [ $RC -gt 0 ] ; then
+    echo -e "\nSomething went wrong with 'fsck':"
+    echo "Output from fsck:"
+    echo "$R"
+    echo
+    if [ $fsdev_state -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+	R=$( lock_volume "${luksdev}" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R"
+	fi
+    fi
+    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R" ; exit $RC
+	fi
+    fi
     exit $RC
 fi
 echo
+[ $DEBUG -gt 0 ] && echo -e "${R}\n"
 
-echo "Mounting filesystem."
-[ $DEBUG -gt 0 ] && echo "Sleeping 2 seconds to make device to settle"
-sleep 2
-R=$( udisksctl mount -b $fsdev ) ; RC=$?
-[ $RC -gt 0 ] && exit $RC
-filesys=$( echo $R | sed -e 's/.* at //' | sed -e 's/\.$//' )
-echo "Filesystem mounted at ${filesys}"
-echo
-
-myUID=$( id -u ) ; myGID=$( id -g )
-echo "Changing user/group of newly created filesystem's root"
+echo "Resizing filesystem."
 echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-$SUCMD "chown $myUID:$myGID ${filesys}/."
+R=$( $SUCMD "resize2fs $fsdev 2>&1" ) ; RC=$?
+if [ $RC -gt 0 ] ; then
+    echo -e "\nSomething went wrong with 'resize2fs':"
+    echo "Output from resize2fs:"
+    echo "$R"
+    echo
+    if [ $fsdev_state -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+	R=$( lock_volume "${luksdev}" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R"
+	fi
+    fi
+    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R" ; exit $RC
+	fi
+    fi
+    exit $RC
+fi
+echo
+[ $DEBUG -gt 0 ] && echo -e "${R}\n"
+
+[ $DEBUG -gt 0 ] && echo "Sleeping 2 seconds to allow device to settle."
+sleep 2
+
+echo "Checking filesystem after resizing it."
+echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
+# Maybe replace 'y' with 'p' if spanwing "$SYCMD" as interactive command
+R=$( $SUCMD "fsck -fvy $fsdev 2>&1" ) ; RC=$?
+if [ $RC -gt 0 ] ; then
+    echo -e "\nSomething went wrong with 'fsck':"
+    echo "Output from fsck:"
+    echo "$R"
+    echo
+    if [ $fsdev_state -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+	R=$( lock_volume "${luksdev}" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R"
+	fi
+    fi
+    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R" ; exit $RC
+	fi
+    fi
+    exit $RC
+fi
+echo
+[ $DEBUG -gt 0 ] && echo -e "${R}\n"
+
+if [ $filesys_state -gt 0 ] ; then
+    echo "Mounting filesystem after resize."
+    R=$( udisksctl mount -b $fsdev ) ; RC=$?
+    [ $RC -gt 0 ] && exit $RC
+    filesys=$( echo $R | sed -e 's/.* at //' | sed -e 's/\.$//' )
+    echo "Filesystem mounted at ${filesys}"
+    echo
+elif [ $fsdev_state -eq 0 ] ; then
+    [ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+    R=$( lock_volume "${luksdev}" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R"
+    fi
+    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R" ; exit $RC
+	fi
+    fi
+fi
 
 echo "Done!"
 echo
