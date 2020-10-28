@@ -14,7 +14,7 @@ _luksmount () {
 
     COMPREPLY=($(compgen -W "$( echo "$LOOPDEVS $PHYSDEVS" )" "${COMP_WORDS[COMP_CWORD]}"))
 }
-complete -F _luksmount luksmount
+complete -F _luksmount luksmount luksextend
 
 _luksunmount () {
     IMAGEPATH="$HOME/.images"
