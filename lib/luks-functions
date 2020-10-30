@@ -1,5 +1,5 @@
 # -*- mode: sh -*-
-# Version 1.0 Copyright (c) Magnus (Mem) Sandberg 2020
+# Version 1.0.1 Copyright (c) Magnus (Mem) Sandberg 2020
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2020-05-06
@@ -353,7 +353,7 @@ check_if_luks_volume () {
     return $RC
 }
 
-# Used by luksextend.sh
+# Used by luksextend.sh, unlock_volume()
 check_if_unlocked () {
     # Check that if the LUKS volume is unlocked
     #
@@ -461,7 +461,7 @@ check_if_mounted () {
     #
     # Return codes:
     #  5: not mounted
-    #  1: df don't find the device
+    #  1: df command didn't find the device
     #  0: LUKS volume has mounted filesystem
     #
     # Return string:
@@ -512,7 +512,7 @@ concept_volume_info () {
     echo 'For the moment used size: "Block size" * "Block count" + "Data segment offset"'
 }
 
-# Used by do_yubikey()
+# Used by unlock_volume(), do_yubikey()
 capture_outputs () {
     # This doesn't work with interactive commands as regular prompts or requests for
     # input uses STDERR for prompting.
@@ -543,7 +543,7 @@ capture_outputs () {
     return $t_ret
 }
 
-# Used by luksextend.sh
+# Used by unlock_volume()
 do_yubikey () {
     # Handle challange-response for YubiKey
     #
