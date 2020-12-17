@@ -1,12 +1,12 @@
 # -*- mode: sh -*-
-# Version 1.0.1 Copyright (c) Magnus (Mem) Sandberg 2020
+# Version 1.1 Copyright (c) Magnus (Mem) Sandberg 2020
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2020-05-06
 
 # Version control of this file
 LUKS_FUNCTIONS_MAJOR="1"
-LUKS_FUNCTIONS_MINOR="4"
+LUKS_FUNCTIONS_MINOR="5"
 
 ## Maybe useful functions
 #info () {
@@ -155,7 +155,15 @@ calc_newsize () {
 		return 2
 	    fi
 	fi
-    elif ! [[ "$newsize" =~ ^[0-9]+$ ]] ; then
+    elif [[ "$newsize" =~ ^[+]?[0-9]+$ ]] ; then
+	if [[ "$newsize" =~ ^[+] ]] ; then
+	    newsize=$( echo $newsize | sed -e 's/^+//' )
+	    newsize=$(( ${cursize} + ${newsize} ))
+	elif [ $newsize -le $cursize ] ; then
+	    echo "Size value too small: $addsize."
+	    return 2
+	fi
+    else
 	echo "Unsupported format: $addsize"
 	return 1
     fi
@@ -185,7 +193,7 @@ disk_free () {
     return 0
 }
 
-# Used by luksextend.sh
+# Used by luksextend.sh, luksmount.sh
 valid_volume () {
     # Check if volume (file)name is valid
     #
@@ -274,7 +282,7 @@ volume_info () {
     return 0
 }
 
-# Used by luksextend.sh
+# Used by luksextend.sh, luksmount.sh
 setup_loopdevice () {
     # Set up loop device for volume file
     #
@@ -284,7 +292,7 @@ setup_loopdevice () {
     #
     # Return string:
     # error message,
-    # or state:loop-devide
+    # or state:loop-device
     #
     # state:
     #  0: new set up of loop device
@@ -308,7 +316,7 @@ setup_loopdevice () {
     return 0
 }
 
-# Used by luksextend.sh
+# Used by luksextend.sh, luksmount.sh
 teardown_loopdevice () {
     # Tear down loop device
     #
@@ -326,7 +334,7 @@ teardown_loopdevice () {
     return $RC
 }
 
-# Used by luksextend.sh
+# Used by luksextend.sh, luksmount.sh
 check_if_luks_volume () {
     # Check that it is a LUKS volume
     # alternative command (as root): "cryptsetup isLuks $luksdev"
@@ -353,7 +361,7 @@ check_if_luks_volume () {
     return $RC
 }
 
-# Used by luksextend.sh, unlock_volume()
+# Used by luksextend.sh, luksmount.sh, unlock_volume()
 check_if_unlocked () {
     # Check that if the LUKS volume is unlocked
     #
@@ -376,7 +384,7 @@ check_if_unlocked () {
     return 0
 }
 
-# Used by luksextend.sh
+# Used by luksextend.sh, luksmount.sh
 unlock_volume () {
     # Unlock LUKS volume
     #
@@ -434,7 +442,7 @@ unlock_volume () {
     return 0
 }
 
-# Used by luksextend.sh
+# Used by luksextend.sh, luksmount.sh
 lock_volume () {
     # Lock LUKS volume
     #
@@ -455,7 +463,7 @@ lock_volume () {
     return 0
 }
 
-# Used by luksextend.sh
+# Used by luksextend.sh, luksmount.sh
 check_if_mounted () {
     # Check that if the LUKS volume has mounted filesystem
     #
@@ -482,7 +490,7 @@ check_if_mounted () {
     return 0
 }
 
-# Used by luksextend.sh
+# Used by luksextend.sh, luksmount.sh
 unmount_fs () {
     # Unmount filesystem
     #
