@@ -11,7 +11,7 @@
 #
 # Developed for udisks2 2.8.1-4 (Debian 10.x Buster)
 #
-# Depends Debian packages:    socat, udisks2, yubikey-personalization (need when using YubiKey)
+# Depends Debian packages:    udisks2, yubikey-personalization (need when using YubiKey)
 # Recommends Debian packages: a2ps
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
@@ -54,11 +54,6 @@ fi
 
 if ! which udisksctl >/dev/null 2>&1 ; then
     echo "This script needs 'udisksctl' command (Debian package: udisks2), exiting."
-    exit 1
-fi
-
-if ! which socat >/dev/null 2>&1 ; then
-    echo "This script needs 'socat' command (Debian package: socat), exiting."
     exit 1
 fi
 
@@ -599,8 +594,7 @@ if [ $STATICPW -gt 0 ] ; then
 	fi
     fi
     [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
-    R=$( (sleep 2; echo "$PW1"; sleep 5) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
-    R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
+    R=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$PW1" ) ) ; RC=$?
     unset PW1 ; unset Resp
 else
     echo "$Resp" > $tempdir/args.txt
@@ -620,8 +614,7 @@ else
 	exit $RC
     fi
     [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
-    R=$( (sleep 2; echo "$Resp"; sleep 5) | socat - EXEC:"udisksctl unlock -b $luksdev",pty,setsid,ctty ) ; RC=$?
-    R=$( echo $R | sed -e 's/\r$//' ) # as socat adds trailing <CR>
+    R=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$Resp" ) ) ; RC=$?
     unset Resp
 fi
 $rmcmd $tempdir/args.txt
