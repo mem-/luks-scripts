@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 0.9 Copyright (c) Magnus (Mem) Sandberg 2020
+# Version 1.0 Copyright (c) Magnus (Mem) Sandberg 2020
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2020-03-14
@@ -16,20 +16,23 @@
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
 HASH=0
+SLOT="7"
 YKSLOT="2"
 SPARSE=0
 SUCMD="su --login -c"
 IMAGEPATH="$HOME/.images"
+EXCLUDEDEVS=""
 CONFIG=$HOME/.config/luks-mgmt.conf
+[ -f $CONFIG ] && . $CONFIG
+
+# Commandline options and device type
 FIX=0
 DEBUG=0
 PHYSDEV=0
-#
-loop_state=0
-fsdev_state=0
-filesys_state=0
-
-[ -f $CONFIG ] && . $CONFIG
+# State of things before the run of this script
+loop_before=0
+fsdev_before=0
+filesys_before=0
 
 if [ "x$1" = "x-v" ] ; then
     DEBUG=1
@@ -47,7 +50,7 @@ elif [ "x$1" = "x-f" ] ; then
     fi
 fi
 
-if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
+my_usage () {
     echo
     echo "Usage: $0 [-h] [-v] [-f] <volume> [<size>]"
     echo
@@ -80,8 +83,37 @@ if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     echo "          : If the size value is ombitted, you will be asked for new size when"
     echo "          : managing an image file."
     echo
-    exit
-fi
+    exit 1
+}
+
+## https://medium.com/@Drew_Stokes/bash-argument-parsing-54f3b81a6a8f
+## https://stackoverflow.com/questions/192249/how-do-i-parse-command-line-arguments-in-bash
+PARAMS=""
+while (( "$#" )) ; do
+    case "$1" in
+	-h)
+	    my_usage
+	    ;;
+	-v)
+	    DEBUG=1
+	    shift
+	    ;;
+	-f)
+	    FIX=1
+	    shift
+	    ;;
+	-*|--*=*) # unsupported flags
+	    my_usage
+	    ;;
+	*) # preserve positional arguments
+	    PARAMS="$PARAMS $1"
+	    shift
+	    ;;
+    esac
+done
+# Set positional arguments in their proper place
+eval set -- "$PARAMS"
+if [ $# -eq 0 ] || [ $# -gt 2 ] ; then my_usage ; fi
 
 if ! which udisksctl >/dev/null 2>&1 ; then
     echo "This script needs 'udisksctl' command (Debian package: udisks2), exiting."
@@ -139,10 +171,10 @@ else
     if [ $RC -gt 0 ] ; then
 	echo "$R" ; exit $RC
     fi
-    read loop_state loopdev <<<$( IFS=":"; echo $R )
+    read loop_before loopdev <<<$( IFS=":"; echo $R )
     DEBUG_loopdev[0]="Image file attached to loop device: ${loopdev}."
     DEBUG_loopdev[1]="Image file already attached to ${loopdev}."
-    [ $DEBUG -gt 0 ] && echo "${DEBUG_loopdev[$loop_state]}"
+    [ $DEBUG -gt 0 ] && echo "${DEBUG_loopdev[$loop_before]}"
     luksdev=$loopdev
 fi
 
@@ -151,7 +183,7 @@ R=$( check_if_luks_volume "${luksdev}" ) ; RC=$?
 if [ $RC -gt 0 ] ; then
     echo "$R"
     # If we handled the loop device, tear it down
-    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+    if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	if [ $RC2 -gt 0 ] ; then
@@ -197,7 +229,7 @@ if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
     if [ $neededspace -ge $diskfree_real ] ;then
 	if [ $SPARSE -eq 0 ] && [ $vol_sparse -eq 0 ] ; then
 	    echo "Not enough space for new size, exiting."
-	    if [ $loop_state -eq 0 ] ; then
+	    if [ $loop_before -eq 0 ] ; then
 		[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
 		R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
 		if [ $RC -gt 0 ] ; then
@@ -218,7 +250,7 @@ if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
 	    ;;
 	*)
 	    echo "Aborting..."
-	    if [ $loop_state -eq 0 ] ; then
+	    if [ $loop_before -eq 0 ] ; then
 		[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
 		R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
 		if [ $RC -gt 0 ] ; then
@@ -236,11 +268,11 @@ if [ $RC -gt 0 ] ; then
     # We continue even when not unlocked
     #echo "$R" ; exit $RC
     [ $DEBUG -gt 0 ] && echo "$R"
-    fsdev_state=0
+    fsdev_before=0
     fsdev=""
     filesys=""
 else
-    fsdev_state=1
+    fsdev_before=1
     fsdev="$R"
     [ $DEBUG -gt 0 ] && echo "LUKS volume unlocked as ${fsdev}."
 
@@ -249,12 +281,12 @@ else
     if [ $RC -eq 5 ] ; then
 	# not mounted
 	[ $DEBUG -gt 0 ] && echo "$R"
-	filesys_state=0
+	filesys_before=0
 	filesys=""
     elif [ $RC -gt 0 ] ; then
 	echo "$R" ; exit $RC
     else
-	filesys_state=1
+	filesys_before=1
 	filesys="$R"
 	[ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${filesys}."
     fi
@@ -359,7 +391,7 @@ fi
 unlock_volume R $luksdev ; RC=$?
 if [ $RC -gt 0 ] ; then
     echo "$R"
-    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+    if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
 	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
 	if [ $RC -gt 0 ] ; then
@@ -387,14 +419,14 @@ if [ $RC -gt 0 ] ; then
     echo "Output from fsck:"
     echo "$R"
     echo
-    if [ $fsdev_state -eq 0 ] ; then
+    if [ $fsdev_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
 	R=$( lock_volume "${luksdev}" ) ; RC=$?
 	if [ $RC -gt 0 ] ; then
 	    echo "$R"
 	fi
     fi
-    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+    if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
 	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
 	if [ $RC -gt 0 ] ; then
@@ -414,14 +446,14 @@ if [ $RC -gt 0 ] ; then
     echo "Output from resize2fs:"
     echo "$R"
     echo
-    if [ $fsdev_state -eq 0 ] ; then
+    if [ $fsdev_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
 	R=$( lock_volume "${luksdev}" ) ; RC=$?
 	if [ $RC -gt 0 ] ; then
 	    echo "$R"
 	fi
     fi
-    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+    if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
 	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
 	if [ $RC -gt 0 ] ; then
@@ -445,14 +477,14 @@ if [ $RC -gt 0 ] ; then
     echo "Output from fsck:"
     echo "$R"
     echo
-    if [ $fsdev_state -eq 0 ] ; then
+    if [ $fsdev_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
 	R=$( lock_volume "${luksdev}" ) ; RC=$?
 	if [ $RC -gt 0 ] ; then
 	    echo "$R"
 	fi
     fi
-    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+    if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
 	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
 	if [ $RC -gt 0 ] ; then
@@ -464,20 +496,40 @@ fi
 echo
 [ $DEBUG -gt 0 ] && echo -e "${R}\n"
 
-if [ $filesys_state -gt 0 ] ; then
+# Time to mount filesystem
+if [ $filesys_before -gt 0 ] ; then
     echo "Mounting filesystem after resize."
     R=$( udisksctl mount -b $fsdev ) ; RC=$?
-    [ $RC -gt 0 ] && exit $RC
+    if [ $RC -gt 0 ] ; then
+	echo -e "\nSomething went wrong with mount of filesystem:"
+	echo "$R"
+	echo
+	if [ $fsdev_before -eq 0 ] ; then
+	    [ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+	    R=$( lock_volume "${luksdev}" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$R"
+	    fi
+	fi
+	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$R" ; exit $RC
+	    fi
+	fi
+	exit $RC
+    fi
     filesys=$( echo $R | sed -e 's/.* at //' | sed -e 's/\.$//' )
     echo "Filesystem mounted at ${filesys}"
     echo
-elif [ $fsdev_state -eq 0 ] ; then
+elif [ $fsdev_before -eq 0 ] ; then
     [ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
     R=$( lock_volume "${luksdev}" ) ; RC=$?
     if [ $RC -gt 0 ] ; then
 	echo "$R"
     fi
-    if [ $PHYSDEV -eq 0 ] && [ $loop_state -eq 0 ] ; then
+    if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
 	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
 	if [ $RC -gt 0 ] ; then
