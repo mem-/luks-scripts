@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use read that has silent mode to not echo passphrase
 #
-# Version 1.3 Copyright (c) Magnus (Mem) Sandberg 2019
+# Version 2.0 Copyright (c) Magnus (Mem) Sandberg 2019-2020
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -9,171 +9,286 @@
 #
 # Developed for udisks2 2.8.1-4 (Debian 10.x Buster)
 #
-# Depends: udisks2, yubikey-personalization
+# Depends of the following Debian packages : udisks2, yubikey-personalization (need when using YubiKey)
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
 HASH=0
+SLOT="7"
 YKSLOT="2"
+SPARSE=0
+SUCMD="su --login -c"
 IMAGEPATH="$HOME/.images"
+EXCLUDEDEVS=""
 CONFIG=$HOME/.config/luks-mgmt.conf
-DEBUG=0
-PHYSDEV=0
-
 [ -f $CONFIG ] && . $CONFIG
 
-if [ "x$1" = "x-v" ] ; then
-    DEBUG=1
-    shift
-fi
+# Commandline options and device type
+FSCK=0
+DEBUG=0
+PHYSDEV=0
+# State of things before the run of this script
+loop_before=0
+fsdev_before=0
+filesys_before=0
 
-if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
-    echo "Usage: $0 [-h] [-v] <volume>"
+my_usage () {
+    echo "Usage: $0 [-h] [-v] [-f] <volume>"
     echo
-    echo " -h      : Show this help text"
-    echo " -v      : Verbose mode"
+    echo " -h       : Show this help text"
+    echo " -v       : Verbose mode"
+    echo " -f       : Do 'fsck' before mounting the filesystem,"
+    echo "          : or ask to unmount to perform 'fsck'"
     echo
-    echo " Volumes :"
-    ls -1 ${IMAGEPATH}/*.img | sed -e 's#.*/#   #' -e 's#\..*$##'
+    echo " <volume> : The volume filename to be mounted, with or without '.img' extension"
+    echo "          : volume should be located in ${IMAGEPATH}/"
+    echo "          : Available volumes :"
+    ls -1 ${IMAGEPATH}/*.img | sed -e 's#.*/#            #' -e 's#\..*$##'
+    echo "          :"
+    echo "          : The volume can also be a physical device, like USB stick"
+    echo "          : Available LUKS devices :"
+    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep -v '@@' | grep -v "^loop" | awk '{ print "            /dev/" $1 }'
     echo
-    echo " The script can also mount devices like USB sticks."
-    echo " Available LUKS devices :"
-    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep -v '@@' | grep -v "^loop" | awk '{ print "   /dev/" $1 }'
-    echo
-    exit
-fi
-
-volume=$1
-if echo $volume | grep "\.\." >/dev/null ; then
-    echo "Dangerous filename including '..': $volume"
     exit 1
-fi
-if echo $volume | grep "\./" >/dev/null ; then
-    echo "Un-supported filename including './': $volume"
-    exit 1
-fi
-if echo $volume | grep "^/dev/" >/dev/null ; then
-    PHYSDEV=1
-    if [ ! -b $volume ] ; then
-	echo "Device ${volume} doesn't exists or is not a block device."
-	exit 1
-    fi
-else
-    if echo $volume | grep "/" >/dev/null ; then
-	echo "Un-supported filename including '/': $volume"
-	echo "No path under or outside $IMAGEPATH supported!"
-	exit 1
-    fi
-    if echo $volume | grep " " >/dev/null ; then
-	echo "Un-supported filename including ' ' (space char): $volume"
-	exit 1
-    fi
-    volume=$( echo $volume | sed -e 's/\.img$//' )
-    if [ ! -f ${IMAGEPATH}/${volume}.img ] ; then
-	echo "Could not find volume ${volume}"
-	exit 1
-    fi
-fi
-
-do_yubikey () {
-    read -s -p "Enter challenge: " pph ; echo
-    [ $HASH -gt 0 ] && pph=$(printf %s "$pph" | sha256sum | awk '{print $1}')
-    echo "Sending challenge to YubiKey, press button if blinking."
-    Resp="$(ykchalresp -${YKSLOT} "$pph" || true )"
-    if [ -z "$Resp" ] ; then
-	unset pph ; unset Resp
-	echo "Yubikey not available, wrong config (slot ${YKSLOT}) or timed out waiting for button press."
-	exit 1
-    fi
-    [ $CONCATENATE -gt 0 ] ; Resp=$pph$Resp
-    echo "Unlock of $luksdev will take a number of seconds, standby..."
-    R=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$Resp" ) ) ; RC=$?
-    unset pph ; unset Resp
-    [ $DEBUG -gt 0 ] && echo "\$R: '$R'"
-    if [ "$R" = "Passphrase: " ] ; then
-	echo
-	echo "Passphrase prompt as response from unlock."
-	echo
-	if [ $PHYSDEV -eq 0 ] ; then
-	    echo "Tear down loop device."
-	    udisksctl loop-delete -b $loopdev
-	fi
-	exit 1
-    fi
 }
 
-if [ $PHYSDEV -eq 0 ] ; then
-    R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
-    if [ $RC -eq 0 ] ; then
-	loopdev=$( echo $R | awk '{ print $1 }' )
-	[ $DEBUG -gt 0 ] && echo "Image $volume already mapped to ${loopdev}."
-    else
-	R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
-	[ $RC -gt 0 ] && exit $RC
-	loopdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
-	[ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}."
-    fi
-    luksdev=$loopdev
-else
-    luksdev=$volume
+## https://medium.com/@Drew_Stokes/bash-argument-parsing-54f3b81a6a8f
+## https://stackoverflow.com/questions/192249/how-do-i-parse-command-line-arguments-in-bash
+PARAMS=""
+while (( "$#" )) ; do
+    case "$1" in
+	-h)
+	    my_usage
+	    ;;
+	-v)
+	    DEBUG=1
+	    shift
+	    ;;
+	-f)
+	    FSCK=1
+	    shift
+	    ;;
+	-*|--*=*) # unsupported flags
+	    my_usage
+	    ;;
+	*) # preserve positional arguments
+	    PARAMS="$PARAMS $1"
+	    shift
+	    ;;
+    esac
+done
+# Set positional arguments in their proper place
+eval set -- "$PARAMS"
+[ $# -ne 1 ] && my_usage
+
+if ! which udisksctl >/dev/null 2>&1 ; then
+    echo "This script needs 'udisksctl' command (Debian package: udisks2), exiting."
+    exit 1
 fi
 
-loopd=$( echo $luksdev | sed -e 's#.*/##' )
-R=$( udisksctl dump | egrep '( | CryptoBacking)Device: ' | grep -A1 "CryptoBackingDevice:.*/${loopd}" ) ; RC=$?
-if [ $RC -eq 0 ] ; then
-    fsdev=$( echo $R | awk '{ print $4 }' )
-    [ $DEBUG -gt 0 ] && echo "Filesystem already unlocked as ${fsdev}."
+# Find location of this script it self to locate functions to include
+# Seach path /lib/luks-mgmt/luks-functions, DIRNAME($0)/../lib/luks-functions, DIRNAME($0)/luks-functions,
+# https://www.cyberciti.biz/faq/unix-linux-appleosx-bsd-bash-script-find-what-directory-itsstoredin/
+
+[ $DEBUG -gt 0 ] && echo "Looking for 'luks-functions' location"
+if [ -r /lib/luks-mgmt/luks-functions ]; then
+    [ $DEBUG -gt 0 ] && echo "Sourcing /lib/luks-mgmt/luks-functions"
+    . /lib/luks-mgmt/luks-functions
 else
-    echo ; echo "Unlock volume: $volume"
-    R=$( ykinfo -q -${YKSLOT} 2>/dev/null ) ; RC=$?
-    if [ $RC -eq 0 ] && [ $R -eq 1 ]; then
-	echo "Found attached YubiKey, will use challenge-response."
-	do_yubikey
+    # Find location of this script it self
+    _scriptdir="$( dirname $( readlink -f ${BASH_SOURCE[0]} ) )"
+#   [ $DEBUG -gt 0 ] && echo "Script's location: $_scriptdir"
+    _libdir="$( echo $_scriptdir | sed -e 's#/$##' | sed -e 's/[^/]\+$/lib/' )"
+#   [ $DEBUG -gt 0 ] && echo "Lib dir: $_libdir"
+
+    if [ -r $_libdir/luks-functions ]; then
+	[ $DEBUG -gt 0 ] && echo "Sourcing $_libdir/luks-functions"
+	. $_libdir/luks-functions
+    elif [ -r $_scriptdir/luks-functions ]; then
+	[ $DEBUG -gt 0 ] && echo "Sourcing $_scriptdir/luks-functions"
+	. $_scriptdir/luks-functions
     else
-	echo "No configured YubiKey (slot ${YKSLOT}) found."
-	read -p "Continue without YubiKey (y/N): " R
-	case $R in
-	    y|Y|[yY][eE][sS])
-		echo
-		echo "No configured YubiKey (slot ${YKSLOT}) found, will use static passphrase."
-		R=$( udisksctl unlock -b $luksdev ) ; RC=$?
-		if [ $RC -gt 0 ] ; then
-		    echo "Could not unlock volume, maybe wrong passphrase."
-		    echo $R
-		    if [ $PHYSDEV -eq 0 ] ; then
-			echo "Tear down loop device."
-			udisksctl loop-delete -b $loopdev
-		    fi
-		    exit $RC
-		fi
-		;;
-	    *)
-		R=$( ykinfo -q -${YKSLOT} 2>/dev/null ) ; RC=$?
-		if [ $RC -eq 0 ] && [ $R -eq 1 ]; then
-		    echo "Found attached YubiKey, will use challenge-response."
-		    do_yubikey
-		else
-		    echo "No configured YubiKey (slot ${YKSLOT}) found, exiting."
-		    if [ $PHYSDEV -eq 0 ] ; then
-			echo "Tear down loop device."
-			udisksctl loop-delete -b $loopdev
-		    fi
-		    exit
-		fi
-		;;
-	esac
+	echo "Could not find any 'luks-functions' to include!"
+	exit 1
     fi
-    fsdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
+fi
+#[ $DEBUG -gt 0 ] && [ $FSCK -gt 0 ] && echo "Fsck will be done before mounting the actual filesystem."
+[ $DEBUG -gt 0 ] && echo
+
+# Validate volume (file) name
+R=$( valid_volume "$1" ) ; RC=$?
+if [ $RC -gt 1 ] ; then
+    echo "$R" ; exit $RC
+elif [ $RC -eq 1 ] ; then
+    echo "No volume found with filename: ${R}.img"
+    exit 1
+fi
+volume="$R"
+
+# If image file, set up loop device.
+# Otherwise the volume name should be the block device it self.
+if echo $volume | grep "^/dev/" >/dev/null ; then
+    PHYSDEV=1
+    luksdev=$volume
+    [ $DEBUG -gt 0 ] && echo "Block device: ${volume}."
+else
+    R=$( setup_loopdevice "${volume}" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R" ; exit $RC
+    fi
+    read loop_before loopdev <<<$( IFS=":"; echo $R )
+    DEBUG_loopdev[0]="Image file attached to loop device: ${loopdev}."
+    DEBUG_loopdev[1]="Image file already attached to ${loopdev}."
+    [ $DEBUG -gt 0 ] && echo "${DEBUG_loopdev[$loop_before]}"
+    luksdev=$loopdev
+fi
+
+# Chech that it is a LUKS volume
+R=$( check_if_luks_volume "${luksdev}" ) ; RC=$?
+if [ $RC -gt 0 ] ; then
+    echo "$R"
+    # If we handled the loop device, tear it down
+    if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
+	fi
+    fi
+    exit $RC
+fi
+[ $DEBUG -gt 0 ] && echo "Is a LUKS volume type: $R"
+
+# Chech if unlocked
+R=$( check_if_unlocked "${luksdev}" ) ; RC=$?
+if [ $RC -eq 0 ] ; then
+    # Already unlocked
+    fsdev_before=1
+    fsdev="$R"
+    [ $DEBUG -gt 0 ] && echo "LUKS volume already unlocked as ${fsdev}."
+else
+    # Unlock LUKS volume
+    unlock_volume R $luksdev ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R"
+	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$R" ; exit $RC
+	    fi
+	fi
+	exit $RC
+    fi
+    fsdev="$R"
     [ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}."
 fi
 
-R=$( df --output=target ${fsdev} ) ; RC=$?
-filesys=$( echo $R | awk '{ print $3 }' )
-if [ $RC -eq 0 ] && [ "x$filesys" != "x/dev" ] ; then
-    echo "Filesystem already mounted at ${filesys}."
+# Check if mounted
+R=$( check_if_mounted "${fsdev}" ) ; RC=$?
+if [ $RC -eq 5 ] ; then
+    # not mounted
+    [ $DEBUG -gt 0 ] && echo "$R"
+elif [ $RC -gt 0 ] ; then
+    # Not found
+    echo "$R"
+    if [ $fsdev_before -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+	R=$( lock_volume "${luksdev}" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R"
+	fi
+    fi
+    if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+	if [ $RC -gt 0 ] ; then
+	    echo "$R" ; exit $RC
+	fi
+    fi
+    exit $RC
 else
+    filesys_before=1
+    filesys="$R"
+fi
+
+# Maybe time for 'fsck'
+if [ $FSCK -gt 0 ] ; then
+    if [ $filesys_before -gt 0 ] ; then
+	echo "Filesystem mounted at ${filesys}."
+	read -p "Unmout to perform 'fsck' (y/N): " R
+	case $R in
+	    y|Y|[yY][eE]|[sS])
+		[ $DEBUG -gt 0 ] && echo "Continuing..."
+		R=$( unmount_fs "${fsdev}" ) ; RC=$?
+		if [ $RC -gt 0 ] ; then
+		    echo "$R" ; exit $RC
+		fi
+		# To remount the filesystem after 'fsck' we change filesys_before
+		filesys_before=0
+		;;
+	    *)
+		echo "Leaving filesystem mounted, skipping 'fsck'."
+		exit 0
+		;;
+	esac
+    fi
+
+    echo "Starting check of filesystem."
+    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
+    # Maybe replace 'y' with 'p' if spanwing "$SYCMD" as interactive command
+    R=$( $SUCMD "fsck -fvy $fsdev 2>&1" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo -e "\nSomething went wrong with 'fsck':"
+	echo "Output from fsck:"
+	echo "$R"
+	echo
+	if [ $fsdev_before -eq 0 ] ; then
+	    [ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+	    R=$( lock_volume "${luksdev}" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$R"
+	    fi
+	fi
+	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$R" ; exit $RC
+	    fi
+	fi
+	exit $RC
+    fi
+    echo
+    [ $DEBUG -gt 0 ] && echo -e "${R}\n"
+fi
+
+# Time to mount filesystem
+if [ $filesys_before -eq 0 ] ; then
+    [ $FSCK -gt 0 ] && echo "Mounting filesystem after 'fsck'."
     R=$( udisksctl mount -b $fsdev ) ; RC=$?
-    [ $RC -gt 0 ] && exit $RC
+    if [ $RC -gt 0 ] ; then
+	echo -e "\nSomething went wrong with mount of filesystem:"
+	echo "$R"
+	echo
+	if [ $fsdev_before -eq 0 ] ; then
+	    [ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+	    R=$( lock_volume "${luksdev}" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$R"
+	    fi
+	fi
+	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		echo "$R" ; exit $RC
+	    fi
+	fi
+	exit $RC
+    fi
     filesys=$( echo $R | sed -e 's/.* at //' | sed -e 's/\.$//' )
     echo "Filesystem mounted at ${filesys}"
+else
+    echo "Filesystem already mounted at ${filesys}."
 fi
