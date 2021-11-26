@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use read that has silent mode to not echo passphrase
 #
-# Version 2.0 Copyright (c) Magnus (Mem) Sandberg 2019-2020
+# Version 2.0.1 Copyright (c) Magnus (Mem) Sandberg 2019-2021
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -9,7 +9,8 @@
 #
 # Developed for udisks2 2.8.1-4 (Debian 10.x Buster)
 #
-# Depends of the following Debian packages : udisks2, yubikey-personalization (need when using YubiKey)
+# Depends of the following Debian packages: udisks2, yubikey-personalization (need when using YubiKey)
+# Recommends Debian packages:               xclip
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
@@ -273,16 +274,16 @@ if [ $filesys_before -eq 0 ] ; then
 	echo
 	if [ $fsdev_before -eq 0 ] ; then
 	    [ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
-	    R=$( lock_volume "${luksdev}" ) ; RC=$?
-	    if [ $RC -gt 0 ] ; then
+	    R=$( lock_volume "${luksdev}" ) ; RC2=$?
+	    if [ $RC2 -gt 0 ] ; then
 		echo "$R"
 	    fi
 	fi
 	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-	    R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-	    if [ $RC -gt 0 ] ; then
-		echo "$R" ; exit $RC
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	    if [ $RC2 -gt 0 ] ; then
+		echo "$R" ; exit $RC2
 	    fi
 	fi
 	exit $RC
@@ -290,5 +291,11 @@ if [ $filesys_before -eq 0 ] ; then
     filesys=$( echo $R | sed -e 's/.* at //' | sed -e 's/\.$//' )
     echo "Filesystem mounted at ${filesys}"
 else
-    echo "Filesystem already mounted at ${filesys}."
+    echo "Filesystem already mounted at ${filesys}"
+fi
+# If we find xclip, put path in clipboard buffer
+if which xclip >/dev/null 2>&1 ; then
+    echo "${filesys}" | xclip -i -r -selection c
+    echo "Path added to clipboard buffer."
+    echo 'Pro tip: cd $( xclip -o -selection c )'
 fi
