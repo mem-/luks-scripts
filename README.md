@@ -4,7 +4,7 @@ This repo contains a number of (bash) scripts that creates, mounts,
 unmounts and extend LUKS image files or USB disks, etc, that has an
 encrypted ext4 filesystem.
 
-The scripts was (2019-2021) developed on Debian GNU/Linux systems.
+The scripts was (2019-2022) developed on Debian GNU/Linux systems.
 
 ## Requirements
 
@@ -40,6 +40,10 @@ sudo cp -pi rules-d/71-yubikey.rules /etc/udev/rules.d/
 sudo chown root:root /etc/udev/rules.d/71-yubikey.rules
 # Older versions of udevadm only has a '--reload' option
 sudo udevadm control --reload-rules ; sudo udevadm trigger
+
+sudo cp -p rules-d/10-udisks2-luks-mgmt.rules /etc/polkit-1/rules.d/
+sudo chown root:root /etc/polkit-1/rules.d/10-udisks2-luks-mgmt.rules
+sudo systemctl restart polkit.service
 
 cp -pi config/luks-mgmt.conf $HOME/.config/
 ```
