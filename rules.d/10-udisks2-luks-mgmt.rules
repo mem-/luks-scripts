@@ -1,0 +1,23 @@
+// See the polkit(8) man page for more information
+// about configuring polkit.
+
+// Allow udisks2 to mount devices without authentication
+// for users in the "plugdev" group.
+
+// Show default action, regardless of override rule(s) below
+// $ pkaction -v --action-id org.freedesktop.udisks2.loop-setup
+//
+// Test rule(s) below with
+// $ pkcheck --action-id org.freedesktop.udisks2.loop-setup --process $$ --allow-user-interaction
+
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.udisks2.loop-setup" ||
+        action.id == "org.freedesktop.udisks2.encrypted-unlock" ||
+        //action.id == "org.freedesktop.udisks2.filesystem-mount-system" ||
+        action.id == "org.freedesktop.udisks2.filesystem-mount") &&
+        //subject.local &&
+        //subject.active &&
+	subject.isInGroup("plugdev")) {
+            return polkit.Result.YES;
+    }
+});
