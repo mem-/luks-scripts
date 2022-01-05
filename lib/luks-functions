@@ -6,7 +6,12 @@
 
 # Version control of this file
 LUKS_FUNCTIONS_MAJOR="1"
-LUKS_FUNCTIONS_MINOR="5"
+LUKS_FUNCTIONS_MINOR="6"
+
+if ! which udisksctl >/dev/null 2>&1 ; then
+    echo "This script needs 'udisksctl' command (Debian package: udisks2), exiting."
+    exit 1
+fi
 
 ## Maybe useful functions
 #info () {
@@ -202,7 +207,7 @@ valid_volume () {
     #  7: filename is okay but is not a reglular file
     #  5: non-existing block device
     #  1: filename is okay but file not created yet
-    #  0: filename is okay and regular file found
+    #  0: filename is okay and regular file found, or block device found
     #
     # Return string:
     # error message,
@@ -389,20 +394,45 @@ unlock_volume () {
     # Unlock LUKS volume
     #
     # Return codes:
+    #  5: YubiKey commands missing
+    #  4: Missing udev rule for YubiKeys
+    #  3: YubiKey missing
+    #  2: YubiKey slot not configured
+    #  1: Error from YubiKey command
+    #  - or -
     # >0: some udisksctl problem
     #  0: volume locked
     #
     # Return string:
-    # nothing or error message from udisksctl
+    # filesystem device, or error message from udisksctl or yubikey commands
     local Ru="" ; local Eu="" ; local RC=""
-    local resp="";
+    local resp="" ; local fsdev=""
     local returnvar="$1"
     local luksdev="$2"
 
     Ru=$( check_if_unlocked "${luksdev}" ) ; RC=$?
     if [ $RC -gt 0 ] ; then
 	do_yubikey resp ; RC=$?
-	if [ $RC -eq 2 ] || [ $RC -eq 3 ]; then
+	if [ $RC -eq 5 ]; then
+	    echo "${resp}"
+	    read -p "Continue without YubiKey (y/N): " Ru
+	    case $Ru in
+		y|Y|[yY][eE][sS])
+		    echo
+		    echo "Continue with static passphrase."
+		    capture_outputs Ru Eu udisksctl unlock -b $luksdev ; RC=$?
+		    if [ $RC -gt 0 ] ; then
+			printf -v "$returnvar" '%s' "Could not unlock volume, maybe wrong passphrase."
+			return $RC
+		    fi
+		    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
+		    ;;
+		*)
+		    printf -v "$returnvar" '%s' "Aborting with missing YubiKey commands."
+		    return 5
+		    ;;
+	    esac
+	elif [ $RC -eq 2 ] || [ $RC -eq 3 ]; then
 	    echo "No configured YubiKey (slot ${YKSLOT}) found."
 	    read -p "Continue without YubiKey (y/N): " Ru
 	    case $Ru in
@@ -419,19 +449,30 @@ unlock_volume () {
 		*)
 		    do_yubikey resp ; RC=$?
 		    if [ $RC -gt 0 ] ; then
-			printf -v "$returnvar" '%s' "${resp}."
+			printf -v "$returnvar" '%s' "${resp}"
 			return $RC
 		    fi
 		    echo "Unlock of $luksdev will take a number of seconds, standby..."
 		    # https://unix.stackexchange.com/questions/447615/provide-password-to-udisks-to-unlock-luks-encrypted-device
 		    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$resp" ) ) ; RC=$?
+		    if [ $RC -gt 0 ] ; then
+			printf -v "$returnvar" '%s' "Could not unlock volume, maybe wrong challenge."
+			return $RC
+		    fi
 		    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
 		    ;;
 	    esac
+	elif [ $RC -eq 1 ] || [ $RC -eq 4 ]; then
+	    printf -v "$returnvar" '%s' "${resp}"
+	    return $RC
 	else
 	    echo "Unlock of $luksdev will take a number of seconds, standby..."
 	    # https://unix.stackexchange.com/questions/447615/provide-password-to-udisks-to-unlock-luks-encrypted-device
 	    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$resp" ) ) ; RC=$?
+	    if [ $RC -gt 0 ] ; then
+		printf -v "$returnvar" '%s' "Could not unlock volume, maybe wrong challenge."
+		return $RC
+	    fi
 	    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
 	fi
     else
@@ -556,6 +597,8 @@ do_yubikey () {
     # Handle challange-response for YubiKey
     #
     # Return codes:
+    #  5: YubiKey commands missing
+    #  4: Missing udev rule for YubiKeys
     #  3: YubiKey missing
     #  2: YubiKey slot not configured
     #  1: Error from YubiKey command
@@ -566,6 +609,11 @@ do_yubikey () {
     local Ry="" ; local Ey="" ; local RC=""
     local pph=""
     local returnvar="$1"
+
+    if ! which ykinfo >/dev/null 2>&1 ; then
+	printf -v "$returnvar" '%s' "This script needs 'ykinfo' and 'ykchalresp' commands (Debian package: yubikey-personalization)."
+	return 5
+    fi
 
     capture_outputs Ry Ey ykinfo -q -${YKSLOT} ; RC=$?
     if [ $RC -eq 0 ] && [ $Ry -eq 1 ]; then
@@ -589,6 +637,9 @@ do_yubikey () {
     elif [ $RC -eq 0 ] && [ $Ry -eq 0 ]; then
 	printf -v "$returnvar" '%s' "YubiKey found but slot ${YKSLOT} not configured."
 	return 2
+    elif [ "x${Ey}" == "xUSB error: Access denied (insufficient permissions)" ]; then
+	printf -v "$returnvar" '%s\n%s' "${Ey}." "Create an udev role for yubikey."
+	return 4
     else
 	printf -v "$returnvar" '%s' "${Ey}."
 	return 3
