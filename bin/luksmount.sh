@@ -175,9 +175,9 @@ else
 	echo "$R"
 	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-	    R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-	    if [ $RC -gt 0 ] ; then
-		echo "$R" ; exit $RC
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	    if [ $RC2 -gt 0 ] ; then
+		echo "$R" ; exit $RC2
 	    fi
 	fi
 	exit $RC
@@ -203,9 +203,9 @@ elif [ $RC -gt 0 ] ; then
     fi
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-	if [ $RC -gt 0 ] ; then
-	    echo "$R" ; exit $RC
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
 	fi
     fi
     exit $RC
@@ -254,9 +254,9 @@ if [ $FSCK -gt 0 ] ; then
 	fi
 	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-	    R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-	    if [ $RC -gt 0 ] ; then
-		echo "$R" ; exit $RC
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	    if [ $RC2 -gt 0 ] ; then
+		echo "$R" ; exit $RC2
 	    fi
 	fi
 	exit $RC

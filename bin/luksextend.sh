@@ -231,9 +231,9 @@ if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
 	    echo "Not enough space for new size, exiting."
 	    if [ $loop_before -eq 0 ] ; then
 		[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-		R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-		if [ $RC -gt 0 ] ; then
-		    echo "$R" ; exit $RC
+		R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+		if [ $RC2 -gt 0 ] ; then
+		    echo "$R" ; exit $RC2
 		fi
 	    fi
 	    exit 1
@@ -252,9 +252,9 @@ if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
 	    echo "Aborting..."
 	    if [ $loop_before -eq 0 ] ; then
 		[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-		R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-		if [ $RC -gt 0 ] ; then
-		    echo "$R" ; exit $RC
+		R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+		if [ $RC2 -gt 0 ] ; then
+		    echo "$R" ; exit $RC2
 		fi
 	    fi
 	    exit 1
@@ -332,9 +332,9 @@ fi
 # unless in "FIX" mode as we assume the image file already extended and then loop device in place
 if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
     [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-    R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-    if [ $RC -gt 0 ] ; then
-	echo "$R" ; exit $RC
+    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+    if [ $RC2 -gt 0 ] ; then
+	echo "$R" ; exit $RC2
     fi
 
     # Go for sparse file if config says so of if volume is a sprase file
@@ -393,9 +393,9 @@ if [ $RC -gt 0 ] ; then
     echo "$R"
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-	if [ $RC -gt 0 ] ; then
-	    echo "$R" ; exit $RC
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
 	fi
     fi
     exit $RC
@@ -428,9 +428,9 @@ if [ $RC -gt 0 ] ; then
     fi
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-	if [ $RC -gt 0 ] ; then
-	    echo "$R" ; exit $RC
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
 	fi
     fi
     exit $RC
@@ -455,9 +455,9 @@ if [ $RC -gt 0 ] ; then
     fi
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-	if [ $RC -gt 0 ] ; then
-	    echo "$R" ; exit $RC
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
 	fi
     fi
     exit $RC
@@ -486,9 +486,9 @@ if [ $RC -gt 0 ] ; then
     fi
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-	if [ $RC -gt 0 ] ; then
-	    echo "$R" ; exit $RC
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
 	fi
     fi
     exit $RC
@@ -532,9 +532,9 @@ elif [ $fsdev_before -eq 0 ] ; then
     fi
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-	R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-	if [ $RC -gt 0 ] ; then
-	    echo "$R" ; exit $RC
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
 	fi
     fi
 fi
