@@ -555,7 +555,7 @@ if [ $PHYSDEV -eq 0 ] ; then
     R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
     [ $RC -gt 0 ] && exit $RC
     loopdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
-    [ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}."
+    [ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}"
     luksdev=$loopdev
     lukslabel="luks_img-$volume"
 else
@@ -620,7 +620,7 @@ fi
 $rmcmd $tempdir/args.txt
 [ $RC -gt 0 ] && exit $RC   # unlock failed...
 fsdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
-[ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}."
+[ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}"
 echo
 
 echo "Creating filesystem in LUKS volume."

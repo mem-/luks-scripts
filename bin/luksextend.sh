@@ -165,15 +165,15 @@ volume="$R"
 if echo $volume | grep "^/dev/" >/dev/null ; then
     PHYSDEV=1
     luksdev=$volume
-    [ $DEBUG -gt 0 ] && echo "Block device: ${volume}."
+    [ $DEBUG -gt 0 ] && echo "Block device: ${volume}"
 else
     R=$( setup_loopdevice "${volume}" ) ; RC=$?
     if [ $RC -gt 0 ] ; then
 	echo "$R" ; exit $RC
     fi
     read loop_before loopdev <<<$( IFS=":"; echo $R )
-    DEBUG_loopdev[0]="Image file attached to loop device: ${loopdev}."
-    DEBUG_loopdev[1]="Image file already attached to ${loopdev}."
+    DEBUG_loopdev[0]="Image file attached to loop device: ${loopdev}"
+    DEBUG_loopdev[1]="Image file already attached to ${loopdev}"
     [ $DEBUG -gt 0 ] && echo "${DEBUG_loopdev[$loop_before]}"
     luksdev=$loopdev
 fi
@@ -184,7 +184,7 @@ if [ $RC -gt 0 ] ; then
     echo "$R"
     # If we handled the loop device, tear it down
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	if [ $RC2 -gt 0 ] ; then
 	    echo "$R" ; exit $RC2
@@ -230,7 +230,7 @@ if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
 	if [ $SPARSE -eq 0 ] && [ $vol_sparse -eq 0 ] ; then
 	    echo "Not enough space for new size, exiting."
 	    if [ $loop_before -eq 0 ] ; then
-		[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+		[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 		R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 		if [ $RC2 -gt 0 ] ; then
 		    echo "$R" ; exit $RC2
@@ -251,7 +251,7 @@ if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
 	*)
 	    echo "Aborting..."
 	    if [ $loop_before -eq 0 ] ; then
-		[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+		[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 		R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 		if [ $RC2 -gt 0 ] ; then
 		    echo "$R" ; exit $RC2
@@ -274,7 +274,7 @@ if [ $RC -gt 0 ] ; then
 else
     fsdev_before=1
     fsdev="$R"
-    [ $DEBUG -gt 0 ] && echo "LUKS volume unlocked as ${fsdev}."
+    [ $DEBUG -gt 0 ] && echo "LUKS volume unlocked as ${fsdev}"
 
     # Chech if mounted
     R=$( check_if_mounted "${fsdev}" ) ; RC=$?
@@ -288,7 +288,7 @@ else
     else
 	filesys_before=1
 	filesys="$R"
-	[ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${filesys}."
+	[ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${filesys}"
     fi
 fi
 
@@ -331,7 +331,7 @@ fi
 # Do all the things related to the image file,
 # unless in "FIX" mode as we assume the image file already extended and then loop device in place
 if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
-    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
     R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
     if [ $RC2 -gt 0 ] ; then
 	echo "$R" ; exit $RC2
@@ -384,7 +384,7 @@ if [ $PHYSDEV -eq 0 ] && [ $FIX -eq 0 ] ; then
 	echo "$R" ; exit $RC
     fi
     read R loopdev <<<$( IFS=":"; echo $R )
-    [ $DEBUG -gt 0 ] && echo "Image file re-attached to loop device: ${loopdev}."
+    [ $DEBUG -gt 0 ] && echo "Image file re-attached to loop device: ${loopdev}"
     luksdev=$loopdev
 fi
 
@@ -392,7 +392,7 @@ unlock_volume R $luksdev ; RC=$?
 if [ $RC -gt 0 ] ; then
     echo "$R"
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	if [ $RC2 -gt 0 ] ; then
 	    echo "$R" ; exit $RC2
@@ -401,7 +401,7 @@ if [ $RC -gt 0 ] ; then
     exit $RC
 fi
 fsdev="$R"
-[ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}."
+[ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}"
 
 
 # As I understand 'cryptsetup -v resize $fsdev' isn't nesessary as it only updates mapping info if needed
@@ -427,7 +427,7 @@ if [ $RC -gt 0 ] ; then
 	fi
     fi
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	if [ $RC2 -gt 0 ] ; then
 	    echo "$R" ; exit $RC2
@@ -454,7 +454,7 @@ if [ $RC -gt 0 ] ; then
 	fi
     fi
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	if [ $RC2 -gt 0 ] ; then
 	    echo "$R" ; exit $RC2
@@ -485,7 +485,7 @@ if [ $RC -gt 0 ] ; then
 	fi
     fi
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	if [ $RC2 -gt 0 ] ; then
 	    echo "$R" ; exit $RC2
@@ -513,7 +513,7 @@ if [ $filesys_before -gt 0 ] ; then
 	    fi
 	fi
 	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	    if [ $RC2 -gt 0 ] ; then
 		echo "$R" ; exit $RC2
@@ -531,7 +531,7 @@ elif [ $fsdev_before -eq 0 ] ; then
 	echo "$R"
     fi
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	if [ $RC2 -gt 0 ] ; then
 	    echo "$R" ; exit $RC2

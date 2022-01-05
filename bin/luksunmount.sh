@@ -76,7 +76,7 @@ if [ $PHYSDEV -eq 0 ] ; then
     R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
     if [ $RC -eq 0 ] ; then
 	loopdev=$( echo $R | awk '{ print $1 }' )
-	[ $DEBUG -gt 0 ] && echo "Image $volume mapped to ${loopdev}."
+	[ $DEBUG -gt 0 ] && echo "Image $volume mapped to ${loopdev}"
     else
 	echo "Image not in use."
 	exit
@@ -90,7 +90,7 @@ loopd=$( echo $luksdev | sed -e 's#.*/##' )
 R=$( udisksctl dump | egrep '( | CryptoBacking)Device: ' | grep -A1 "CryptoBackingDevice:.*/${loopd}" ) ; RC=$?
 if [ $RC -eq 0 ] ; then
     fsdev=$( echo $R | awk '{ print $4 }' )
-    [ $DEBUG -gt 0 ] && echo "Filesystem unlocked as ${fsdev}."
+    [ $DEBUG -gt 0 ] && echo "Filesystem unlocked as ${fsdev}"
 else
     echo "Filesystem not unlocked."
     if [ $PHYSDEV -eq 0 ] ; then

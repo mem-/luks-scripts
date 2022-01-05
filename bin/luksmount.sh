@@ -132,15 +132,15 @@ volume="$R"
 if echo $volume | grep "^/dev/" >/dev/null ; then
     PHYSDEV=1
     luksdev=$volume
-    [ $DEBUG -gt 0 ] && echo "Block device: ${volume}."
+    [ $DEBUG -gt 0 ] && echo "Block device: ${volume}"
 else
     R=$( setup_loopdevice "${volume}" ) ; RC=$?
     if [ $RC -gt 0 ] ; then
 	echo "$R" ; exit $RC
     fi
     read loop_before loopdev <<<$( IFS=":"; echo $R )
-    DEBUG_loopdev[0]="Image file attached to loop device: ${loopdev}."
-    DEBUG_loopdev[1]="Image file already attached to ${loopdev}."
+    DEBUG_loopdev[0]="Image file attached to loop device: ${loopdev}"
+    DEBUG_loopdev[1]="Image file already attached to ${loopdev}"
     [ $DEBUG -gt 0 ] && echo "${DEBUG_loopdev[$loop_before]}"
     luksdev=$loopdev
 fi
@@ -151,7 +151,7 @@ if [ $RC -gt 0 ] ; then
     echo "$R"
     # If we handled the loop device, tear it down
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	if [ $RC2 -gt 0 ] ; then
 	    echo "$R" ; exit $RC2
@@ -167,14 +167,14 @@ if [ $RC -eq 0 ] ; then
     # Already unlocked
     fsdev_before=1
     fsdev="$R"
-    [ $DEBUG -gt 0 ] && echo "LUKS volume already unlocked as ${fsdev}."
+    [ $DEBUG -gt 0 ] && echo "LUKS volume already unlocked as ${fsdev}"
 else
     # Unlock LUKS volume
     unlock_volume R $luksdev ; RC=$?
     if [ $RC -gt 0 ] ; then
 	echo "$R"
 	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	    if [ $RC2 -gt 0 ] ; then
 		echo "$R" ; exit $RC2
@@ -183,7 +183,7 @@ else
 	exit $RC
     fi
     fsdev="$R"
-    [ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}."
+    [ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}"
 fi
 
 # Check if mounted
@@ -202,7 +202,7 @@ elif [ $RC -gt 0 ] ; then
 	fi
     fi
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	if [ $RC2 -gt 0 ] ; then
 	    echo "$R" ; exit $RC2
@@ -217,7 +217,7 @@ fi
 # Maybe time for 'fsck'
 if [ $FSCK -gt 0 ] ; then
     if [ $filesys_before -gt 0 ] ; then
-	echo "Filesystem mounted at ${filesys}."
+	echo "Filesystem mounted at ${filesys}"
 	read -p "Unmout to perform 'fsck' (y/N): " R
 	case $R in
 	    y|Y|[yY][eE]|[sS])
@@ -253,7 +253,7 @@ if [ $FSCK -gt 0 ] ; then
 	    fi
 	fi
 	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	    if [ $RC2 -gt 0 ] ; then
 		echo "$R" ; exit $RC2
@@ -282,7 +282,7 @@ if [ $filesys_before -eq 0 ] ; then
 	    fi
 	fi
 	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
-	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	    if [ $RC2 -gt 0 ] ; then
 		echo "$R" ; exit $RC2
