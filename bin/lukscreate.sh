@@ -11,8 +11,8 @@
 #
 # Developed for udisks2 2.8.1-4 (Debian 10.x Buster)
 #
-# Depends Debian packages:    udisks2, yubikey-personalization (need when using YubiKey)
-# Recommends Debian packages: a2ps
+# Depends on the following Debian packages: udisks2, yubikey-personalization (need when using YubiKey)
+# Recommended Debian packages:              a2ps, wipe
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
@@ -640,6 +640,8 @@ if [ $RC -gt 0 ] ; then
 fi
 echo    
 
+# Time to mount filesystem
+# Code with more error handling in luksextend.sh, luksmount.sh
 echo "Mounting filesystem."
 [ $DEBUG -gt 0 ] && echo "Sleeping 2 seconds to make device to settle"
 sleep 2

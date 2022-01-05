@@ -11,7 +11,7 @@
 #
 # Developed for udisks2 2.8.1-4 (Debian 10.x Buster)
 #
-# Depends Debian packages: udisks2, yubikey-personalization (need when using YubiKey)
+# Depends on the following Debian packages: udisks2, yubikey-personalization (need when using YubiKey)
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
@@ -121,7 +121,7 @@ if ! which udisksctl >/dev/null 2>&1 ; then
 fi
 
 # Find location of this script it self to locate functions to include
-# Seach path /lib/luks-mgmt/luks-functions, DIRNAME($0)/../lib/luks-functions, DIRNAME($0)/luks-functions,
+# Search path /lib/luks-mgmt/luks-functions, DIRNAME($0)/../lib/luks-functions, DIRNAME($0)/luks-functions,
 # https://www.cyberciti.biz/faq/unix-linux-appleosx-bsd-bash-script-find-what-directory-itsstoredin/
 
 [ $DEBUG -gt 0 ] && echo "Looking for 'luks-functions' location"
@@ -497,6 +497,7 @@ echo
 [ $DEBUG -gt 0 ] && echo -e "${R}\n"
 
 # Time to mount filesystem
+# The following, similar code, also in lukscreate.sh, luksmount.sh
 if [ $filesys_before -gt 0 ] ; then
     echo "Mounting filesystem after resize."
     R=$( udisksctl mount -b $fsdev ) ; RC=$?
@@ -506,16 +507,16 @@ if [ $filesys_before -gt 0 ] ; then
 	echo
 	if [ $fsdev_before -eq 0 ] ; then
 	    [ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
-	    R=$( lock_volume "${luksdev}" ) ; RC=$?
-	    if [ $RC -gt 0 ] ; then
+	    R=$( lock_volume "${luksdev}" ) ; RC2=$?
+	    if [ $RC2 -gt 0 ] ; then
 		echo "$R"
 	    fi
 	fi
 	if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}."
-	    R=$( teardown_loopdevice "$loopdev" ) ; RC=$?
-	    if [ $RC -gt 0 ] ; then
-		echo "$R" ; exit $RC
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	    if [ $RC2 -gt 0 ] ; then
+		echo "$R" ; exit $RC2
 	    fi
 	fi
 	exit $RC

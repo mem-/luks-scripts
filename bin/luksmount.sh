@@ -9,7 +9,7 @@
 #
 # Developed for udisks2 2.8.1-4 (Debian 10.x Buster)
 #
-# Depends of the following Debian packages: udisks2, yubikey-personalization (need when using YubiKey)
+# Depends on the following Debian packages: udisks2, yubikey-personalization (need when using YubiKey)
 # Recommends Debian packages:               xclip
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
@@ -88,7 +88,7 @@ if ! which udisksctl >/dev/null 2>&1 ; then
 fi
 
 # Find location of this script it self to locate functions to include
-# Seach path /lib/luks-mgmt/luks-functions, DIRNAME($0)/../lib/luks-functions, DIRNAME($0)/luks-functions,
+# Search path /lib/luks-mgmt/luks-functions, DIRNAME($0)/../lib/luks-functions, DIRNAME($0)/luks-functions,
 # https://www.cyberciti.biz/faq/unix-linux-appleosx-bsd-bash-script-find-what-directory-itsstoredin/
 
 [ $DEBUG -gt 0 ] && echo "Looking for 'luks-functions' location"
@@ -113,6 +113,7 @@ else
 	exit 1
     fi
 fi
+
 #[ $DEBUG -gt 0 ] && [ $FSCK -gt 0 ] && echo "Fsck will be done before mounting the actual filesystem."
 [ $DEBUG -gt 0 ] && echo
 
@@ -265,6 +266,7 @@ if [ $FSCK -gt 0 ] ; then
 fi
 
 # Time to mount filesystem
+# The following, similar code, also in lukscreate.sh, luksextend.sh
 if [ $filesys_before -eq 0 ] ; then
     [ $FSCK -gt 0 ] && echo "Mounting filesystem after 'fsck'."
     R=$( udisksctl mount -b $fsdev ) ; RC=$?
@@ -293,6 +295,7 @@ if [ $filesys_before -eq 0 ] ; then
 else
     echo "Filesystem already mounted at ${filesys}"
 fi
+
 # If we find xclip, put path in clipboard buffer
 if which xclip >/dev/null 2>&1 ; then
     echo "${filesys}" | xclip -i -r -selection c
