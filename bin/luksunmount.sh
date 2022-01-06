@@ -1,6 +1,6 @@
-#!/bin/sh
+#!/bin/bash
 #
-# Version 1.3 Copyright (c) Magnus (Mem) Sandberg 2019
+# Version 2.0 Copyright (c) Magnus (Mem) Sandberg 2019,2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -12,11 +12,13 @@
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 IMAGEPATH="$HOME/.images"
+EXCLUDEDEVS=""
 CONFIG=$HOME/.config/luks-mgmt.conf
+[ -f $CONFIG ] && . $CONFIG
+
+# Commandline options and device type
 DEBUG=0
 PHYSDEV=0
-
-[ -f $CONFIG ] && . $CONFIG
 
 if [ "x$1" = "x-v" ] ; then
     DEBUG=1
@@ -40,39 +42,55 @@ if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     exit
 fi
 
-volume=$1
-if echo $volume | grep "\.\." >/dev/null ; then
-    echo "Dangerous filename including '..': $volume"
+if ! which udisksctl >/dev/null 2>&1 ; then
+    echo "This script needs 'udisksctl' command (Debian package: udisks2), exiting."
     exit 1
 fi
-if echo $volume | grep "\./" >/dev/null ; then
-    echo "Un-supported filename including './': $volume"
-    exit 1
-fi
-if echo $volume | grep "^/dev/" >/dev/null ; then
-    PHYSDEV=1
-    if [ ! -b $volume ] ; then
-	echo "Device ${volume} doesn't exists or is not a block device."
-	exit 1
-    fi
+
+# Find location of this script it self to locate functions to include
+# Search path /lib/luks-mgmt/luks-functions, DIRNAME($0)/../lib/luks-functions, DIRNAME($0)/luks-functions,
+# https://www.cyberciti.biz/faq/unix-linux-appleosx-bsd-bash-script-find-what-directory-itsstoredin/
+
+[ $DEBUG -gt 0 ] && echo "Looking for 'luks-functions' location"
+if [ -r /lib/luks-mgmt/luks-functions ]; then
+    [ $DEBUG -gt 0 ] && echo "Sourcing /lib/luks-mgmt/luks-functions"
+    . /lib/luks-mgmt/luks-functions
 else
-    if echo $volume | grep "/" >/dev/null ; then
-	echo "Un-supported filename including '/': $volume"
-	echo "No path under or outside $IMAGEPATH supported!"
-	exit 1
-    fi
-    if echo $volume | grep " " >/dev/null ; then
-	echo "Un-supported filename including ' ' (space char): $volume"
-	exit 1
-    fi
-    volume=$( echo $volume | sed -e 's/\.img$//' )
-    if [ ! -f ${IMAGEPATH}/${volume}.img ] ; then
-	echo "Could not find volume ${volume}"
+    # Find location of this script it self
+    _scriptdir="$( dirname $( readlink -f ${BASH_SOURCE[0]} ) )"
+#   [ $DEBUG -gt 0 ] && echo "Script's location: $_scriptdir"
+    _libdir="$( echo $_scriptdir | sed -e 's#/$##' | sed -e 's/[^/]\+$/lib/' )"
+#   [ $DEBUG -gt 0 ] && echo "Lib dir: $_libdir"
+
+    if [ -r $_libdir/luks-functions ]; then
+	[ $DEBUG -gt 0 ] && echo "Sourcing $_libdir/luks-functions"
+	. $_libdir/luks-functions
+    elif [ -r $_scriptdir/luks-functions ]; then
+	[ $DEBUG -gt 0 ] && echo "Sourcing $_scriptdir/luks-functions"
+	. $_scriptdir/luks-functions
+    else
+	echo "Could not find any 'luks-functions' to include!"
 	exit 1
     fi
 fi
 
-if [ $PHYSDEV -eq 0 ] ; then
+# Validate volume (file) name
+R=$( valid_volume "$1" ) ; RC=$?
+if [ $RC -gt 1 ] ; then
+    echo "$R" ; exit $RC
+elif [ $RC -eq 1 ] ; then
+    echo "No volume found with filename: ${R}.img"
+    exit 1
+fi
+volume="$R"
+
+# If image file, find loop device.
+# Otherwise the volume name should be the block device it self.
+if echo $volume | grep "^/dev/" >/dev/null ; then
+    PHYSDEV=1
+    luksdev=$volume
+    [ $DEBUG -gt 0 ] && echo "Block device: ${volume}"
+else
     R=$( /usr/sbin/losetup -l | grep "${IMAGEPATH}/${volume}.img" ) ; RC=$?
     if [ $RC -eq 0 ] ; then
 	loopdev=$( echo $R | awk '{ print $1 }' )
@@ -82,50 +100,71 @@ if [ $PHYSDEV -eq 0 ] ; then
 	exit
     fi
     luksdev=$loopdev
-else
-    luksdev=$volume
 fi
 
-loopd=$( echo $luksdev | sed -e 's#.*/##' )
-R=$( udisksctl dump | egrep '( | CryptoBacking)Device: ' | grep -A1 "CryptoBackingDevice:.*/${loopd}" ) ; RC=$?
-if [ $RC -eq 0 ] ; then
-    fsdev=$( echo $R | awk '{ print $4 }' )
-    [ $DEBUG -gt 0 ] && echo "Filesystem unlocked as ${fsdev}"
-else
-    echo "Filesystem not unlocked."
+# Chech that it is a LUKS volume
+R=$( check_if_luks_volume "${luksdev}" ) ; RC=$?
+if [ $RC -gt 0 ] ; then
+    echo "$R"
+    # If we handled the loop device, tear it down
     if [ $PHYSDEV -eq 0 ] ; then
-	echo "Tear down loop device."
-	udisksctl loop-delete -b $loopdev
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
+	fi
+    fi
+    exit $RC
+fi
+[ $DEBUG -gt 0 ] && echo "Is a LUKS volume type: $R"
+
+# Chech if unlocked
+R=$( check_if_unlocked "${luksdev}" ) ; RC=$?
+if [ $RC -eq 0 ] ; then
+    # Is unlocked
+    fsdev="$R"
+    [ $DEBUG -gt 0 ] && echo "LUKS volume unlocked as ${fsdev}"
+else
+    if [ $PHYSDEV -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "LUKS volume not unlocked, tear down of loop device ${loopdev}"
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
+	fi
     fi
     exit
 fi
 
-R=$( df --output=target ${fsdev} ) ; RC=$?
-filesys=$( echo $R | awk '{ print $3 }' )
-if [ $RC -eq 0 ] && [ "x$filesys" != "x/dev" ] ; then
-    [ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${filesys}, un-mounting."
-    R=$( udisksctl unmount -b $fsdev 2>&1 ) ; RC=$?
+# Check if mounted
+R=$( check_if_mounted "${fsdev}" ) ; RC=$?
+if [ $RC -eq 0 ] ; then
+    [ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${fsdev}, un-mounting."
+    R=$( unmount_fs "${fsdev}" ) ; RC=$?
     if [ $RC -gt 0 ] ; then
-	echo "Unmount problems: $R"
-	exit 1
+	echo "$R" ; exit $RC
     fi
 else
     echo "Filesystem not mounted."
 fi
-[ $DEBUG -gt 0 ] &&  echo "Locking filesystem"
-R=$( udisksctl lock -b $luksdev 2>&1 ) ; RC=$?
+
+# Locking the LUKS volume
+[ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+R=$( lock_volume "${luksdev}" ) ; RC=$?
 if [ $RC -gt 0 ] ; then
-    echo "Lock problems: $R"
-    exit 1
+    echo "$R"
 fi
+
 if [ $PHYSDEV -eq 0 ] ; then
-    echo "Tear down loop device."
-    udisksctl loop-delete -b $loopdev
+    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
+    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+    if [ $RC2 -gt 0 ] ; then
+	echo "$R" ; exit $RC2
+    fi
 else
     read -p "Power off $luksdev (y/N): " R
     case $R in
 	y|Y|[yY][eE][sS])
-	    [ $DEBUG -gt 0 ] && echo "Powering off $luksdev."
+	    [ $DEBUG -gt 0 ] && echo "Powering off ${luksdev}"
 	    R=$( udisksctl power-off -b $luksdev ) ; RC=$?
 	    if [ $RC -gt 0 ] ; then
 		echo "Power off problems: $R"

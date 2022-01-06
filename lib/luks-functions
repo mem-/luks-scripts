@@ -198,7 +198,7 @@ disk_free () {
     return 0
 }
 
-# Used by luksextend.sh, luksmount.sh
+# Used by luksextend.sh, luksmount.sh, luksunmount.sh
 valid_volume () {
     # Check if volume (file)name is valid
     #
@@ -321,7 +321,7 @@ setup_loopdevice () {
     return 0
 }
 
-# Used by luksextend.sh, luksmount.sh
+# Used by luksextend.sh, luksmount.sh, luksunmount.sh
 teardown_loopdevice () {
     # Tear down loop device
     #
@@ -339,7 +339,7 @@ teardown_loopdevice () {
     return $RC
 }
 
-# Used by luksextend.sh, luksmount.sh
+# Used by luksextend.sh, luksmount.sh, luksunmount.sh
 check_if_luks_volume () {
     # Check that it is a LUKS volume
     # alternative command (as root): "cryptsetup isLuks $luksdev"
@@ -366,7 +366,7 @@ check_if_luks_volume () {
     return $RC
 }
 
-# Used by luksextend.sh, luksmount.sh, unlock_volume()
+# Used by luksextend.sh, luksmount.sh, luksunmount.sh, unlock_volume()
 check_if_unlocked () {
     # Check that if the LUKS volume is unlocked
     #
@@ -483,7 +483,7 @@ unlock_volume () {
     return 0
 }
 
-# Used by luksextend.sh, luksmount.sh
+# Used by luksextend.sh, luksmount.sh, luksunmount.sh
 lock_volume () {
     # Lock LUKS volume
     #
@@ -504,7 +504,7 @@ lock_volume () {
     return 0
 }
 
-# Used by luksextend.sh, luksmount.sh
+# Used by luksextend.sh, luksmount.sh, luksunmount.sh
 check_if_mounted () {
     # Check that if the LUKS volume has mounted filesystem
     #
@@ -531,7 +531,7 @@ check_if_mounted () {
     return 0
 }
 
-# Used by luksextend.sh, luksmount.sh
+# Used by luksextend.sh, luksmount.sh, luksunmount.sh
 unmount_fs () {
     # Unmount filesystem
     #
