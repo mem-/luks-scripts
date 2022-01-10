@@ -68,7 +68,7 @@ int_to_human () {
     fi
 }
 
-# Used by calc_newsize()
+# Used by lukscreate.sh, calc_newsize()
 human_to_number () {
     # Convert human readable to number
     # Inspired by https://stackoverflow.com/a/31625253
@@ -198,7 +198,7 @@ disk_free () {
     return 0
 }
 
-# Used by luksextend.sh, luksmount.sh, luksunmount.sh
+# Used by lukscreate.sh, luksextend.sh, luksmount.sh, luksunmount.sh
 valid_volume () {
     # Check if volume (file)name is valid
     #
@@ -287,7 +287,7 @@ volume_info () {
     return 0
 }
 
-# Used by luksextend.sh, luksmount.sh
+# Used by lukscreate.sh, luksextend.sh, luksmount.sh
 setup_loopdevice () {
     # Set up loop device for volume file
     #
@@ -321,7 +321,7 @@ setup_loopdevice () {
     return 0
 }
 
-# Used by luksextend.sh, luksmount.sh, luksunmount.sh
+# Used by lukscreate.sh, luksextend.sh, luksmount.sh, luksunmount.sh
 teardown_loopdevice () {
     # Tear down loop device
     #
@@ -454,7 +454,8 @@ unlock_volume () {
 		    fi
 		    echo "Unlock of $luksdev will take a number of seconds, standby..."
 		    # https://unix.stackexchange.com/questions/447615/provide-password-to-udisks-to-unlock-luks-encrypted-device
-		    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$resp" ) ) ; RC=$?
+		    # Not using 'capture_outputs()' as we know the Challenge-Response
+		    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$resp" ) 2>&1 ) ; RC=$?
 		    if [ $RC -gt 0 ] ; then
 			printf -v "$returnvar" '%s' "Could not unlock volume, maybe wrong challenge."
 			return $RC
@@ -468,7 +469,8 @@ unlock_volume () {
 	else
 	    echo "Unlock of $luksdev will take a number of seconds, standby..."
 	    # https://unix.stackexchange.com/questions/447615/provide-password-to-udisks-to-unlock-luks-encrypted-device
-	    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$resp" ) ) ; RC=$?
+	    # Not using 'capture_outputs()' as we know the Challenge-Response
+	    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$resp" ) 2>&1 ) ; RC=$?
 	    if [ $RC -gt 0 ] ; then
 		printf -v "$returnvar" '%s' "Could not unlock volume, maybe wrong challenge."
 		return $RC
@@ -483,7 +485,7 @@ unlock_volume () {
     return 0
 }
 
-# Used by luksextend.sh, luksmount.sh, luksunmount.sh
+# Used by lukscreate.sh, luksextend.sh, luksmount.sh, luksunmount.sh
 lock_volume () {
     # Lock LUKS volume
     #

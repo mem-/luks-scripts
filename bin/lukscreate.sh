@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 1.3 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
+# Version 2.0 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -31,6 +31,9 @@ DEBUG=0
 PHYSDEV=0
 PRINTOUT=0
 PRINTFILE=0
+loop_before=0
+fsdev_before=0  # will never change in this script,
+		# just here to handle failed mount the same way as other scripts
 
 if [ "x$1" = "x-v" ] ; then
     DEBUG=1
@@ -65,43 +68,29 @@ if ! which cryptsetup >/dev/null 2>&1 ; then
     exit 1
 fi
 
-cleanup_tmp () {
-    if [ -e $tempdir ] ; then
-	echo "Cleaning up $tempdir"
-	[ $DEBUG -gt 0 ] && echo "Using '${rmcmd}' to remove files"
-	$rmcmd 2>/dev/null $tempdir/*.txt
-	rmdir $tempdir
-    fi
-}
+# Find location of this script it self to locate functions to include
+# Search path /lib/luks-mgmt/luks-functions, DIRNAME($0)/../lib/luks-functions, DIRNAME($0)/luks-functions,
+# https://www.cyberciti.biz/faq/unix-linux-appleosx-bsd-bash-script-find-what-directory-itsstoredin/
 
-volume=$1
-if echo $volume | grep "\.\." >/dev/null ; then
-    echo "Dangerous filename including '..': $volume"
-    exit 1
-fi
-if echo $volume | grep "\./" >/dev/null ; then
-    echo "Un-supported filename including './': $volume"
-    exit 1
-fi
-if echo $volume | grep "^/dev/" >/dev/null ; then
-    PHYSDEV=1
-    if [ ! -b $volume ] ; then
-	echo "Device ${volume} doesn't exists or is not a block device."
-	exit 1
-    fi
+[ $DEBUG -gt 0 ] && echo "Looking for 'luks-functions' location"
+if [ -r /lib/luks-mgmt/luks-functions ]; then
+    [ $DEBUG -gt 0 ] && echo "Sourcing /lib/luks-mgmt/luks-functions"
+    . /lib/luks-mgmt/luks-functions
 else
-    if echo $volume | grep "/" >/dev/null ; then
-	echo "Un-supported filename including '/': $volume"
-	echo "No path under or outside $IMAGEPATH supported!"
-	exit 1
-    fi
-    if echo $volume | grep " " >/dev/null ; then
-	echo "Un-supported filename including ' ' (space char): $volume"
-	exit 1
-    fi
-    volume=$( echo $volume | sed -e 's/\.img$//' )
-    if [ -f ${IMAGEPATH}/${volume}.img ] ; then
-	echo "Volume ${IMAGEPATH}/${volume}.img already exists."
+    # Find location of this script it self
+    _scriptdir="$( dirname $( readlink -f ${BASH_SOURCE[0]} ) )"
+#   [ $DEBUG -gt 0 ] && echo "Script's location: $_scriptdir"
+    _libdir="$( echo $_scriptdir | sed -e 's#/$##' | sed -e 's/[^/]\+$/lib/' )"
+#   [ $DEBUG -gt 0 ] && echo "Lib dir: $_libdir"
+
+    if [ -r $_libdir/luks-functions ]; then
+	[ $DEBUG -gt 0 ] && echo "Sourcing $_libdir/luks-functions"
+	. $_libdir/luks-functions
+    elif [ -r $_scriptdir/luks-functions ]; then
+	[ $DEBUG -gt 0 ] && echo "Sourcing $_scriptdir/luks-functions"
+	. $_scriptdir/luks-functions
+    else
+	echo "Could not find any 'luks-functions' to include!"
 	exit 1
     fi
 fi
@@ -113,6 +102,29 @@ elif which wipe >/dev/null 2>&1 ; then
 else
     rmcmd="rm"
 fi
+
+cleanup_tmp () {
+    if [ -e $tempdir ] ; then
+	echo "Cleaning up $tempdir"
+	[ $DEBUG -gt 0 ] && echo "Using '${rmcmd}' to remove files"
+	$rmcmd 2>/dev/null $tempdir/*.txt
+	rmdir $tempdir
+    fi
+}
+
+# Validate volume (file) name
+R=$( valid_volume "$1" ) ; RC=$?
+if echo "$R" | grep "^/dev/" >/dev/null ; then
+    PHYSDEV=1
+    [ $DEBUG -gt 0 ] && echo "Block device: ${R}."
+elif [ $RC -eq 0 ] ; then
+    echo "Volume ${IMAGEPATH}/${R}.img already exists."
+    exit 1
+elif [ $RC -gt 1 ] ; then
+    # not a block device, not regular file, or dangerous filename, etc
+    echo "$R" ; exit $RC
+fi
+volume="$R"
 
 # Tempdir used for print-out and parameters to 'su' commands
 tempdir=/tmp/lukstemp
@@ -210,6 +222,17 @@ if [ $PHYSDEV -eq 0 ] ; then
     echo "Setting up LUKS volume in image file ${IMAGEPATH}/${volume}.img"
     echo "NOTE: LUKS2 metadata normally uses 16M of the image size!"
     read -p "Enter image size in 'dd' format (512M, 1G, etc): " R
+    numsize=$( human_to_number "${R}" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$numsize"
+	cleanup_tmp
+	exit $RC
+    fi
+    if [ $numsize -lt 20000000 ] ; then
+	echo "Volume size less than 20MB is not recommended."
+	cleanup_tmp
+	exit 1
+    fi
     if [ $SPARSE -gt 0 ] ; then
 	# Using 'if [[ ]]' as case statements doesn't do regex
 	if [[ "$R" =~  ^[0-9]+[cwb]?$ ]] ||
@@ -221,13 +244,14 @@ if [ $PHYSDEV -eq 0 ] ; then
 	    cleanup_tmp
 	    exit 1
 	fi
+	blocks="$R"
 	[ $DEBUG -gt 0 ] && echo "Block size for dd: $BS"
-	[ $DEBUG -gt 0 ] && echo "Number of blocks to create: $R"
+	[ $DEBUG -gt 0 ] && echo "Number of blocks to create: ${blocks}"
 
 	if [ $DEBUG -gt 0 ] ; then
-	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$R
+	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$blocks
 	else
-	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$R 2>&1 | egrep -v ' records | copied, '
+	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$blocks 2>&1 | egrep -v ' records | copied, '
 	fi
     else
 	# Using 'if [[ ]]' as case statements doesn't do regex
@@ -568,17 +592,21 @@ case $R in
 	;;
 esac
 
-if [ $PHYSDEV -eq 0 ] ; then
-    [ $DEBUG -gt 0 ] && echo -e "\nSetting up loopback device"
-    R=$( udisksctl loop-setup -f ${IMAGEPATH}/${volume}.img ) ; RC=$?
-    [ $RC -gt 0 ] && exit $RC
-    loopdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
-    [ $DEBUG -gt 0 ] && echo "Loop dev: ${loopdev}"
-    luksdev=$loopdev
-    lukslabel="luks_img-$volume"
-else
+if [ $PHYSDEV -gt 0 ] ; then
     luksdev=$volume
     lukslabel="luks-$label"
+else
+    [ $DEBUG -gt 0 ] && echo -e "\nSetting up loopback device."
+    R=$( setup_loopdevice "${volume}" ) ; RC=$?
+    if [ $RC -gt 0 ] ; then
+	echo "$R" ; exit $RC
+    fi
+    read loop_before loopdev <<<$( IFS=":"; echo $R )
+    DEBUG_loopdev[0]="Image file attached to loop device: ${loopdev}"
+    DEBUG_loopdev[1]="Image file already attached to ${loopdev}"
+    [ $DEBUG -gt 0 ] && echo "${DEBUG_loopdev[$loop_before]}"
+    luksdev=$loopdev
+    lukslabel="luks_img-$volume"
 fi
 
 echo -e "\nCreating LUKS volume."
@@ -592,8 +620,9 @@ if [ $STATICPW -gt 0 ] ; then
 	echo -e "\nCould not create LUKS volume, exiting."
 	unset Resp ; unset PW1
 	if [ $PHYSDEV -eq 0 ] ; then
-	    [ $DEBUG -gt 0 ] && echo "Tear down loop device."
-	    udisksctl loop-delete -b $loopdev
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	    [ $RC2 -gt 0 ] && echo "$R"
 	    rm ${IMAGEPATH}/${volume}.img
 	fi
 	cleanup_tmp
@@ -611,9 +640,23 @@ if [ $STATICPW -gt 0 ] ; then
 	    $SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup luksAddKey $luksdev" ; RC=$?
 	fi
     fi
+    # Not using 'unlock_volume()' in luks-functions as we know the password
     [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
-    R=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$PW1" ) ) ; RC=$?
+    [ $DEBUG -gt 0 ] && echo "Sleeping 2 seconds to allow the device to settle."
+    sleep 2s
+    R=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$PW1" ) 2>&1 ) ; RC=$?
     unset PW1 ; unset Resp
+    if [ $RC -gt 0 ] ; then
+	echo "Unlock failed: $R"
+	if [ $PHYSDEV -eq 0 ] ; then
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	    [ $RC2 -gt 0 ] && echo "$R"
+	    rm ${IMAGEPATH}/${volume}.img
+	fi
+	cleanup_tmp
+	exit $RC
+    fi
 else
     echo "$Resp" > $tempdir/args.txt
     echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
@@ -624,15 +667,17 @@ else
 	echo -e "\nCould not create LUKS volume, exiting."
 	unset Resp
 	if [ $PHYSDEV -eq 0 ] ; then
-	    [ $DEBUG -gt 0 ] && echo "Tear down loop device."
-	    udisksctl loop-delete -b $loopdev
+	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
+	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+            [ $RC2 -gt 0 ] && echo "$R"
 	    rm ${IMAGEPATH}/${volume}.img
 	fi
 	cleanup_tmp
 	exit $RC
     fi
+    # Not using 'unlock_volume()' in luks-functions as we know the Challenge-Response
     [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
-    R=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$Resp" ) ) ; RC=$?
+    R=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$Resp" ) 2>&1 ) ; RC=$?
     unset Resp
 fi
 $rmcmd $tempdir/args.txt
@@ -649,9 +694,15 @@ if [ $RC -gt 0 ] ; then
     echo "Output from mke2fs (newlines stipped off):"
     echo $R
     echo
+    [ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+    R=$( lock_volume "${luksdev}" ) ; RC2=$?
+    if [ $RC2 -gt 0 ] && echo "$R"
     if [ $PHYSDEV -eq 0 ] ; then
-	udisksctl lock -b $luksdev
-	udisksctl loop-delete -b $loopdev
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	[ $RC2 -gt 0 ] && echo "$R"
+	echo "Should ${IMAGEPATH}/${volume}.img be removed???"
+	# rm ${IMAGEPATH}/${volume}.img
     fi
     cleanup_tmp
     exit $RC
@@ -664,7 +715,26 @@ echo "Mounting filesystem."
 [ $DEBUG -gt 0 ] && echo "Sleeping 2 seconds to allow the device to settle."
 sleep 2
 R=$( udisksctl mount -b $fsdev ) ; RC=$?
-[ $RC -gt 0 ] && exit $RC
+if [ $RC -gt 0 ] ; then
+    echo -e "\nSomething went wrong with mount of filesystem:"
+    echo "$R"
+    echo
+    if [ $fsdev_before -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
+	R=$( lock_volume "${luksdev}" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R"
+	fi
+    fi
+    if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	if [ $RC2 -gt 0 ] ; then
+	    echo "$R" ; exit $RC2
+	fi
+    fi
+    exit $RC
+fi
 filesys=$( echo $R | sed -e 's/.* at //' | sed -e 's/\.$//' )
 echo "Filesystem mounted at ${filesys}"
 echo
