@@ -138,7 +138,8 @@ fi
 # Check if mounted
 R=$( check_if_mounted "${fsdev}" ) ; RC=$?
 if [ $RC -eq 0 ] ; then
-    [ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${fsdev}, un-mounting."
+    filesys="$R"
+    [ $DEBUG -gt 0 ] && echo "Filesystem mounted at ${filesys}, un-mounting."
     R=$( unmount_fs "${fsdev}" ) ; RC=$?
     if [ $RC -gt 0 ] ; then
 	echo "$R" ; exit $RC
