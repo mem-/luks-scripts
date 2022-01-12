@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 2.0 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
+# Version 2.1 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -533,6 +533,29 @@ case $R in
 	    exit 1
 	fi
 
+	capture_outputs Ry Ey ykinfo -q -${YKSLOT} ; RC=$?
+	if [ $RC -eq 0 ] && [ $Ry -eq 1 ]; then
+	    [ $DEBUG -gt 0 ] && echo "Found attached YubiKey, will try challenge-response."
+	elif [ $RC -eq 0 ] && [ $Ry -eq 0 ]; then
+	    echo "YubiKey found but slot ${YKSLOT} not configured."
+	    unset PW1
+	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
+	    cleanup_tmp
+	    exit 2
+	elif [ "x${Ey}" == "xUSB error: Access denied (insufficient permissions)" ]; then
+	    echo -e "${Ey}.\nCreate an udev role for yubikey."
+	    unset PW1
+	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
+	    cleanup_tmp
+	    exit 4
+	else
+	    echo "${Ey}."
+	    unset PW1
+	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
+	    cleanup_tmp
+	    exit 3
+	fi
+
 	CHALRESP=1
 	echo "Challenge passphrase should be at least 10 characters."
 	read -s -p "Enter challenge: " pph1 ; echo
@@ -630,14 +653,18 @@ if [ $STATICPW -gt 0 ] ; then
     fi
     if [ $CHALRESP -gt 0 ] ; then
 	echo -e "\nAdding Challenge-Response to LUKS volume."
-	echo "$Resp" >> $tempdir/args.txt
-	echo "$Resp" >> $tempdir/args.txt
+	#echo "$Resp" >> $tempdir/args.txt
+	#echo "$Resp" >> $tempdir/args.txt
 	if [ ! -z $SLOT ] && [ $SLOT -gt 0 ] ; then
 	    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-	    $SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup --key-slot=$SLOT luksAddKey $luksdev" ; RC=$?
+	    #$SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup --key-slot=$SLOT luksAddKey $luksdev" ; RC=$?
+	    # The following should work from 2.1.0, works at least with 2.6.1
+	    $SUCMD "cryptsetup --key-slot=$SLOT --key-file <( echo -n "$PW1" ) luksAddKey $luksdev <( echo -n "$Resp" )" ; RC=$?
 	else
 	    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-	    $SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup luksAddKey $luksdev" ; RC=$?
+	    #$SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup luksAddKey $luksdev" ; RC=$?
+	    # The following should work from 2.1.0, works at least with 2.6.1
+	    $SUCMD "cryptsetup --key-file <( echo -n "$PW1" ) luksAddKey $luksdev <( echo -n "$Resp" )" ; RC=$?
 	fi
     fi
     # Not using 'unlock_volume()' in luks-functions as we know the password

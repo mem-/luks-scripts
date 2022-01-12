@@ -563,7 +563,7 @@ concept_volume_info () {
     echo 'For the moment used size: "Block size" * "Block count" + "Data segment offset"'
 }
 
-# Used by unlock_volume(), do_yubikey()
+# Used by lukscreate.sh, unlock_volume(), do_yubikey()
 capture_outputs () {
     # This doesn't work with interactive commands as regular prompts or requests for
     # input uses STDERR for prompting.
