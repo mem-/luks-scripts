@@ -533,6 +533,7 @@ case $R in
 	    exit 1
 	fi
 
+	# Similar code exists in luks-functions
 	capture_outputs Ry Ey ykinfo -q -${YKSLOT} ; RC=$?
 	if [ $RC -eq 0 ] && [ $Ry -eq 1 ]; then
 	    [ $DEBUG -gt 0 ] && echo "Found attached YubiKey, will try challenge-response."

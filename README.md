@@ -1,10 +1,35 @@
 # LUKS Management
 
-This repo contains a number of (bash) scripts that creates, mounts,
-unmounts and extend LUKS image files or USB disks, etc, that has an
-encrypted ext4 filesystem.
+This repo contains a number of (bash) scripts that create, mount, unmount
+and extend LUKS image files or USB disks, etc, that has an encrypted
+ext4 filesystem.
 
 The scripts was (2019-2022) developed on Debian GNU/Linux systems.
+
+## Background
+
+When using a fully encrypted harddisk on a loptop or other computer,
+it only protects your sensitive data when the computer is powered off.
+Hybernate may be okey, but `suspend to RAM` probably still has your
+harddrive's encryption key in RAM.
+
+Sensitive data, like salary reports, git repos, etc, that you rarely look
+at or don't use while at a conferenc or reading emails at a cafe, can
+be stored in a LUKS-encrypted image file and only unlocked when needed.
+
+To further increase security, these scripts support the use of a YubiKey
+configured with challenge-response.
+
+### Weaknesses
+
+If your computer is compromised or f onther users has root access to the
+computer, it is easy to modofy the scripts to copy encryption key(s) used
+to unlock the LUKS container(s). The way to protect against this should be
+to implement some kind of OTP for LUKS.
+
+In general, any locked LUKS volume will be protected if someone gains
+access to your running computer or even grabs your laptop out of your
+hands when the screen is unlocked.
 
 ## Requirements
 
@@ -12,6 +37,8 @@ On Debian systems, the following packages are required:
 (equivalent RPMs, or other package formats, can be used)
 - cryptsetup (create, unlock and lock LUKS volumes)
 - udisks2 (the udisksctl command for mounting images/volumes, etc)
+  (udisks2 recommends 'policykit-1' or 'polkitd' depending on Debian version)
+  (and libblockdev-crypto2 and libblockdev-mdraid2 depending on Debian version)
 - yubikey-personalization (need when using YubiKey)
 
 Recommended Debian packages:
