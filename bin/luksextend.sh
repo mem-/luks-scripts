@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 1.1 Copyright (c) Magnus (Mem) Sandberg 2020,2022
+# Version 1.2 Copyright (c) Magnus (Mem) Sandberg 2020,2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2020-03-14
@@ -65,11 +65,11 @@ my_usage () {
     echo " <volume> : The volume filename to be extended, with or without '.img' extension"
     echo "          : volume should be located in ${IMAGEPATH}/"
     echo "          : Available volumes :"
-    ls -1 ${IMAGEPATH}/*.img | sed -e 's#.*/#            #' -e 's#\..*$##'
-    echo "          :"
+    ls -1 ${IMAGEPATH}/*.img | sed -e 's#.*/#           - #' -e 's#\..*$##'
+    echo
     echo "          : The volume can also be a physical device, like USB stick,"
     echo "          : Available LUKS devices :"
-    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep -v '@@' | grep -v "^loop" | awk '{ print "            /dev/" $1 }'
+    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep -v '@@' | grep -v "^loop" | awk '{ print "           - /dev/" $1 }'
     echo
     echo " <size>   : The new volume size."
     echo "          :"

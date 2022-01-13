@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Version 2.1 Copyright (c) Magnus (Mem) Sandberg 2019,2022
+# Version 2.1.1 Copyright (c) Magnus (Mem) Sandberg 2019,2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -32,15 +32,15 @@ fi
 if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     echo "Usage: $0 [-h] [-v] <volume>"
     echo
-    echo " -h      : show this help text"
-    echo " -v      : verbose mode"
+    echo " -h       : show this help text"
+    echo " -v       : verbose mode"
     echo
     echo " Mounted volumes :"
-    /usr/sbin/losetup -l | grep $IMAGEPATH | awk '{ print $6 }' | sed -e 's#.*/#   #' | sed -e 's/\.img$//'
+    /usr/sbin/losetup -l | grep $IMAGEPATH | awk '{ print $6 }' | sed -e 's#.*/#           - #' -e 's/\.img$//'
     echo
     echo " The script can also unmount devices like USB sticks."
     echo " Mounted LUKS devices :"
-    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep '@@' | grep -v "^loop" | awk '{ print "   /dev/" $1 }' | egrep -v "${EXCLUDEDEVS}"
+    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep '@@' | grep -v "^loop" | awk '{ print "           - /dev/" $1 }' | egrep -v "${EXCLUDEDEVS}"
 
     echo
     exit

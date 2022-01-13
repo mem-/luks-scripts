@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use read that has silent mode to not echo passphrase
 #
-# Version 2.1 Copyright (c) Magnus (Mem) Sandberg 2019-2022
+# Version 2.1.1 Copyright (c) Magnus (Mem) Sandberg 2019-2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -48,11 +48,11 @@ my_usage () {
     echo " <volume> : The volume filename to be mounted, with or without '.img' extension"
     echo "          : volume should be located in ${IMAGEPATH}/"
     echo "          : Available volumes :"
-    ls -1 ${IMAGEPATH}/*.img | sed -e 's#.*/#            #' -e 's#\..*$##'
-    echo "          :"
+    ls -1 ${IMAGEPATH}/*.img | sed -e 's#.*/#           - #' -e 's#\..*$##'
+    echo
     echo "          : The volume can also be a physical device, like USB stick"
     echo "          : Available LUKS devices :"
-    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep -v '@@' | grep -v "^loop" | awk '{ print "            /dev/" $1 }'
+    lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep -v '@@' | grep -v "^loop" | awk '{ print "           - /dev/" $1 }'
     echo
     exit 1
 }
