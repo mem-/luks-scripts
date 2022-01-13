@@ -1,5 +1,5 @@
 # -*- mode: sh -*-
-# Version 1.1 Copyright (c) Magnus (Mem) Sandberg 2020
+# Version 1.2 Copyright (c) Magnus (Mem) Sandberg 2020,2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2020-05-06
@@ -406,15 +406,15 @@ unlock_volume () {
     # Return string:
     # filesystem device, or error message from udisksctl or yubikey commands
     local Ru="" ; local Eu="" ; local RC=""
-    local resp="" ; local fsdev=""
-    local returnvar="$1"
+    local uvresp="" ; local fsdev=""
+    local uvreturnvar="$1"
     local luksdev="$2"
 
     Ru=$( check_if_unlocked "${luksdev}" ) ; RC=$?
     if [ $RC -gt 0 ] ; then
-	do_yubikey resp ; RC=$?
+	do_yubikey uvresp ; RC=$?
 	if [ $RC -eq 5 ]; then
-	    echo "${resp}"
+	    echo "${uvresp}"
 	    read -p "Continue without YubiKey (y/N): " Ru
 	    case $Ru in
 		y|Y|[yY][eE][sS])
@@ -422,17 +422,18 @@ unlock_volume () {
 		    echo "Continue with static passphrase."
 		    capture_outputs Ru Eu udisksctl unlock -b $luksdev ; RC=$?
 		    if [ $RC -gt 0 ] ; then
-			printf -v "$returnvar" '%s' "Could not unlock volume, maybe wrong passphrase."
+			printf -v "$uvreturnvar" '%s' "Could not unlock volume, maybe wrong passphrase."
 			return $RC
 		    fi
 		    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
 		    ;;
 		*)
-		    printf -v "$returnvar" '%s' "Aborting with missing YubiKey commands."
+		    printf -v "$uvreturnvar" '%s' "Aborting with missing YubiKey commands."
 		    return 5
 		    ;;
 	    esac
 	elif [ $RC -eq 2 ] || [ $RC -eq 3 ]; then
+	    echo "${uvresp}"
 	    echo "No configured YubiKey (slot ${YKSLOT}) found."
 	    read -p "Continue without YubiKey (y/N): " Ru
 	    case $Ru in
@@ -441,38 +442,38 @@ unlock_volume () {
 		    echo "No configured YubiKey (slot ${YKSLOT}) found, will use static passphrase."
 		    capture_outputs Ru Eu udisksctl unlock -b $luksdev ; RC=$?
 		    if [ $RC -gt 0 ] ; then
-			printf -v "$returnvar" '%s' "Could not unlock volume, maybe wrong passphrase."
+			printf -v "$uvreturnvar" '%s' "Could not unlock volume, maybe wrong passphrase."
 			return $RC
 		    fi
 		    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
 		    ;;
 		*)
-		    do_yubikey resp ; RC=$?
+		    do_yubikey uvresp ; RC=$?
 		    if [ $RC -gt 0 ] ; then
-			printf -v "$returnvar" '%s' "${resp}"
+			printf -v "$uvreturnvar" '%s' "${uvresp}"
 			return $RC
 		    fi
 		    echo "Unlock of $luksdev will take a number of seconds, standby..."
 		    # https://unix.stackexchange.com/questions/447615/provide-password-to-udisks-to-unlock-luks-encrypted-device
 		    # Not using 'capture_outputs()' as we know the Challenge-Response
-		    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$resp" ) 2>&1 ) ; RC=$?
+		    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$uvresp" ) 2>&1 ) ; RC=$?
 		    if [ $RC -gt 0 ] ; then
-			printf -v "$returnvar" '%s' "Could not unlock volume, maybe wrong challenge."
+			printf -v "$uvreturnvar" '%s' "Could not unlock volume, maybe wrong challenge."
 			return $RC
 		    fi
 		    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
 		    ;;
 	    esac
 	elif [ $RC -eq 1 ] || [ $RC -eq 4 ]; then
-	    printf -v "$returnvar" '%s' "${resp}"
+	    printf -v "$uvreturnvar" '%s' "${uvresp}"
 	    return $RC
 	else
 	    echo "Unlock of $luksdev will take a number of seconds, standby..."
 	    # https://unix.stackexchange.com/questions/447615/provide-password-to-udisks-to-unlock-luks-encrypted-device
 	    # Not using 'capture_outputs()' as we know the Challenge-Response
-	    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$resp" ) 2>&1 ) ; RC=$?
+	    Ru=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$uvresp" ) 2>&1 ) ; RC=$?
 	    if [ $RC -gt 0 ] ; then
-		printf -v "$returnvar" '%s' "Could not unlock volume, maybe wrong challenge."
+		printf -v "$uvreturnvar" '%s' "Could not unlock volume, maybe wrong challenge."
 		return $RC
 	    fi
 	    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
@@ -481,7 +482,7 @@ unlock_volume () {
 	fsdev="$Ru"
 	[ $DEBUG -gt 0 ] && echo "LUKS volume already unlocked."
     fi
-    printf -v "$returnvar" '%s' "${fsdev}"
+    printf -v "$uvreturnvar" '%s' "${fsdev}"
     return 0
 }
 
@@ -581,7 +582,7 @@ capture_outputs () {
     # (with a lot of interesting examples)
     # and maybe also https://stackoverflow.com/questions/32890389/can-you-redirect-stderr-for-an-entire-bash-session
 
-    local resp="$1" ; local error="$2" ; shift 2
+    local coresp="$1" ; local coerror="$2" ; shift 2
     local t_std="" ; local t_err="" ; local t_ret=0
 
     eval "$( eval "$@" \
@@ -589,8 +590,8 @@ capture_outputs () {
          > >(t_std=$(cat); declare -p t_std); \
              t_ret=$?; declare -p t_ret )"
 
-    printf -v "$resp" '%s' "$t_std"
-    printf -v "$error" '%s' "$t_err"
+    printf -v "$coresp" '%s' "$t_std"
+    printf -v "$coerror" '%s' "$t_err"
     return $t_ret
 }
 
