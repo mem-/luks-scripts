@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 1.0 Copyright (c) Magnus (Mem) Sandberg 2020
+# Version 1.1 Copyright (c) Magnus (Mem) Sandberg 2020,2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2020-03-14
@@ -12,6 +12,10 @@
 # Developed for udisks2 2.8.1-4 (Debian 10.x Buster)
 #
 # Depends on the following Debian packages: udisks2, yubikey-personalization (need when using YubiKey)
+#
+# Required luks-functions version
+REQ_LUKS_FUNCTIONS_MAJOR="1"
+REQ_LUKS_FUNCTIONS_MINOR="5"
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
@@ -146,6 +150,30 @@ else
 	exit 1
     fi
 fi
+
+if [ "x${LUKS_FUNCTIONS_MAJOR}" = "x" ] ; then
+    echo "Could not find LUKS_FUNCTIONS_MAJOR, luks-functions file too old."
+    exit 1
+fi
+if [ "x${LUKS_FUNCTIONS_MINOR}" = "x" ] ; then
+    echo "Could not find LUKS_FUNCTIONS_MINOR, luks-functions file too old."
+    exit 1
+fi
+[ $DEBUG -gt 0 ] && echo "LUKS_FUNCTIONS_MAJOR: ${LUKS_FUNCTIONS_MAJOR}"
+[ $DEBUG -gt 0 ] && echo "LUKS_FUNCTIONS_MINOR: ${LUKS_FUNCTIONS_MINOR}"
+if [ ${LUKS_FUNCTIONS_MAJOR} -ne ${REQ_LUKS_FUNCTIONS_MAJOR} ] ; then
+    echo
+    echo "Found LUKS_FUNCTIONS_MAJOR: ${LUKS_FUNCTIONS_MAJOR}"
+    echo "This script needs major verion: ${REQ_LUKS_FUNCTIONS_MAJOR}"
+    exit 1
+fi
+if [ ${LUKS_FUNCTIONS_MINOR} -lt ${REQ_LUKS_FUNCTIONS_MINOR} ] ; then
+    echo
+    echo "Found LUKS_FUNCTIONS_MINOR: ${LUKS_FUNCTIONS_MINOR}"
+    echo "This script needs minor verion ${REQ_LUKS_FUNCTIONS_MINOR} or higher."
+    exit 1
+fi
+
 [ $DEBUG -gt 0 ] && [ $FIX -gt 0 ] && echo "Fix mode active."
 [ $DEBUG -gt 0 ] && echo
 addsize="$2"

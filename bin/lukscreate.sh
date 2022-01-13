@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 2.1 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
+# Version 2.2 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -13,6 +13,10 @@
 #
 # Depends on the following Debian packages: cryptsetup-bin, udisks2, yubikey-personalization (need when using YubiKey)
 # Recommended Debian packages:              a2ps, wipe
+#
+# Required luks-functions version
+REQ_LUKS_FUNCTIONS_MAJOR="1"
+REQ_LUKS_FUNCTIONS_MINOR="6"
 #
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
@@ -93,6 +97,29 @@ else
 	echo "Could not find any 'luks-functions' to include!"
 	exit 1
     fi
+fi
+
+if [ "x${LUKS_FUNCTIONS_MAJOR}" = "x" ] ; then
+    echo "Could not find LUKS_FUNCTIONS_MAJOR, luks-functions file too old."
+    exit 1
+fi
+if [ "x${LUKS_FUNCTIONS_MINOR}" = "x" ] ; then
+    echo "Could not find LUKS_FUNCTIONS_MINOR, luks-functions file too old."
+    exit 1
+fi
+[ $DEBUG -gt 0 ] && echo "LUKS_FUNCTIONS_MAJOR: ${LUKS_FUNCTIONS_MAJOR}"
+[ $DEBUG -gt 0 ] && echo "LUKS_FUNCTIONS_MINOR: ${LUKS_FUNCTIONS_MINOR}"
+if [ ${LUKS_FUNCTIONS_MAJOR} -ne ${REQ_LUKS_FUNCTIONS_MAJOR} ] ; then
+    echo
+    echo "Found LUKS_FUNCTIONS_MAJOR: ${LUKS_FUNCTIONS_MAJOR}"
+    echo "This script needs major verion: ${REQ_LUKS_FUNCTIONS_MAJOR}"
+    exit 1
+fi
+if [ ${LUKS_FUNCTIONS_MINOR} -lt ${REQ_LUKS_FUNCTIONS_MINOR} ] ; then
+    echo
+    echo "Found LUKS_FUNCTIONS_MINOR: ${LUKS_FUNCTIONS_MINOR}"
+    echo "This script needs minor verion ${REQ_LUKS_FUNCTIONS_MINOR} or higher."
+    exit 1
 fi
 
 if which shred >/dev/null 2>&1 ; then
@@ -526,14 +553,14 @@ case $R in
 	;;
     *)
 	if ! which ykchalresp >/dev/null 2>&1 ; then
-	    echo "This script needs 'ykchalresp' command (Debian package: yubikey-personalization), exiting."
+	    echo "This script needs 'ykinfo' and 'ykchalresp' command (Debian package: yubikey-personalization), exiting."
 	    unset PW1
 	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
 	    cleanup_tmp
 	    exit 1
 	fi
 
-	# Similar code exists in luks-functions
+	# Similar code exists in luks-functions, in do_yubikey()
 	capture_outputs Ry Ey ykinfo -q -${YKSLOT} ; RC=$?
 	if [ $RC -eq 0 ] && [ $Ry -eq 1 ]; then
 	    [ $DEBUG -gt 0 ] && echo "Found attached YubiKey, will try challenge-response."
@@ -724,7 +751,7 @@ if [ $RC -gt 0 ] ; then
     echo
     [ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
     R=$( lock_volume "${luksdev}" ) ; RC2=$?
-    if [ $RC2 -gt 0 ] && echo "$R"
+    [ $RC2 -gt 0 ] && echo "$R"
     if [ $PHYSDEV -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
