@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 2.2 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
+# Version 2.3 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -138,6 +138,22 @@ cleanup_tmp () {
 	rmdir $tempdir
     fi
 }
+
+cleanup_all () {
+    if [ ${PHYSDEV} -eq 0 ] && [ "x${IMAGEPATH}" != "x" ] && [ "x${volume}" != "x" ] && [ -f ${IMAGEPATH}/${volume}.img ] ; then
+	echo "Removing ${IMAGEPATH}/${volume}.img"
+	rm ${IMAGEPATH}/${volume}.img
+    elif [ $DEBUG -gt 0 ] ; then
+	echo "Inside cleanup_tmp()"
+	echo "PHYSDEV:   ${PHYSDEV}"
+	echo "IMAGEPATH: ${IMAGEPATH}"
+	echo "volume:    ${volume}"
+	echo -n "${IMAGEPATH}/${volume}.img "
+	[ -e ${IMAGEPATH}/${volume}.img ] && echo "does exist..." || echo "doesn't exist as expected."
+    fi
+    cleanup_tmp
+}
+
 
 # Validate volume (file) name
 R=$( valid_volume "$1" ) ; RC=$?
@@ -420,8 +436,7 @@ case $R in
 		    if [ "$PW1" != "$PW2" ]; then
 			echo "Passwords do not match, exiting."
 			unset PW1 ; unset PW2
-			[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-			cleanup_tmp
+			cleanup_all
 			exit 1
 		    fi
 		fi
@@ -433,16 +448,14 @@ case $R in
 		    if [ "$PW1" != "$PW2" ]; then
 			echo "Passwords do not match, exiting."
 			unset PW1 ; unset PW2
-			[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-			cleanup_tmp
+			cleanup_all
 			exit 1
 		    fi
 		    unset PW2
 		    if [ ${#PW1} -lt 10 ] || [ ${#PW1} -gt 99 ] ; then
 			echo "Wrong length again, exiting."
 			unset PW1
-			[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-			cleanup_tmp
+			cleanup_all
 			exit 1
 		    fi
 		fi
@@ -459,8 +472,7 @@ case $R in
 			;;
 		    *)
 			echo "Wrong value: $R"
-			[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-			cleanup_tmp
+			cleanup_all
 			exit 1
 			;;
 		esac
@@ -502,8 +514,7 @@ case $R in
 			    if [ $RC -gt 0 ] ; then
 				echo "Unknown printer: ${printer}, exiting."
 				unset PW1
-				[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-				cleanup_tmp
+				cleanup_all
 				exit 1
 			    fi
 			fi
@@ -546,8 +557,7 @@ case $R in
 	CHALRESP=0
 	if [ $STATICPW -eq 0 ] ; then
 	    echo "At least one unlock method is needed, exiting."
-	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-	    cleanup_tmp
+	    cleanup_all
 	    exit 1
 	fi
 	;;
@@ -555,8 +565,7 @@ case $R in
 	if ! which ykchalresp >/dev/null 2>&1 ; then
 	    echo "This script needs 'ykinfo' and 'ykchalresp' command (Debian package: yubikey-personalization), exiting."
 	    unset PW1
-	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-	    cleanup_tmp
+	    cleanup_all
 	    exit 1
 	fi
 
@@ -567,20 +576,17 @@ case $R in
 	elif [ $RC -eq 0 ] && [ $Ry -eq 0 ]; then
 	    echo "YubiKey found but slot ${YKSLOT} not configured."
 	    unset PW1
-	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-	    cleanup_tmp
+	    cleanup_all
 	    exit 2
 	elif [ "x${Ey}" == "xUSB error: Access denied (insufficient permissions)" ]; then
 	    echo -e "${Ey}.\nCreate an udev role for yubikey."
 	    unset PW1
-	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-	    cleanup_tmp
+	    cleanup_all
 	    exit 4
 	else
 	    echo "${Ey}."
 	    unset PW1
-	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-	    cleanup_tmp
+	    cleanup_all
 	    exit 3
 	fi
 
@@ -595,8 +601,7 @@ case $R in
 	    if [ "$pph1" != "$pph2" ]; then
 		echo "Challenges do not match, exiting."
 		unset pph1 ; unset pph2 ; unset PW1
-		[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-		cleanup_tmp
+		cleanup_all
 		exit 1
 	    fi
 	fi
@@ -608,16 +613,14 @@ case $R in
 	    if [ "$pph1" != "$pph2" ]; then
 		echo "Challenges do not match, exiting."
 		unset pph1 ; unset pph2 ; unset PW1
-		[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-		cleanup_tmp
+		cleanup_all
 		exit 1
 	    fi
 	    unset pph2
 	    if [ ${#pph1} -lt 10 ] ; then
 		echo "Wrong length again, exiting."
 		unset pph1 ; unset PW1
-		[ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-		cleanup_tmp
+		cleanup_all
 		exit 1
 	    fi
 	fi
@@ -630,8 +633,7 @@ case $R in
 	if [ -z "$Resp" ] ; then
 	    echo "Yubikey not available, wrong config (slot ${YKSLOT}) or timed out waiting for button press."
 	    unset pph1 ; unset Resp ; unset PW1
-	    [ $PHYSDEV -eq 0 ] && rm ${IMAGEPATH}/${volume}.img
-	    cleanup_tmp
+	    cleanup_all
 	    exit 1
 	fi
 	[ $DEBUG -gt 0 ] && echo -e "\nResponse:     $Resp"
@@ -674,9 +676,8 @@ if [ $STATICPW -gt 0 ] ; then
 	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	    [ $RC2 -gt 0 ] && echo "$R"
-	    rm ${IMAGEPATH}/${volume}.img
 	fi
-	cleanup_tmp
+	cleanup_all
 	exit $RC
     fi
     if [ $CHALRESP -gt 0 ] ; then
@@ -707,9 +708,8 @@ if [ $STATICPW -gt 0 ] ; then
 	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	    [ $RC2 -gt 0 ] && echo "$R"
-	    rm ${IMAGEPATH}/${volume}.img
 	fi
-	cleanup_tmp
+	cleanup_all
 	exit $RC
     fi
 else
@@ -725,9 +725,8 @@ else
 	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
             [ $RC2 -gt 0 ] && echo "$R"
-	    rm ${IMAGEPATH}/${volume}.img
 	fi
-	cleanup_tmp
+	cleanup_all
 	exit $RC
     fi
     # Not using 'unlock_volume()' in luks-functions as we know the Challenge-Response
@@ -756,10 +755,8 @@ if [ $RC -gt 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
 	[ $RC2 -gt 0 ] && echo "$R"
-	echo "Should ${IMAGEPATH}/${volume}.img be removed???"
-	# rm ${IMAGEPATH}/${volume}.img
     fi
-    cleanup_tmp
+    cleanup_all
     exit $RC
 fi
 echo    
