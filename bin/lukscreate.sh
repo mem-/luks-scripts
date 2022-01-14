@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 2.3 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
+# Version 2.3.1 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -44,12 +44,18 @@ if [ "x$1" = "x-v" ] ; then
     shift
 fi
 
+if [ "x$1" = "x-vv" ] ; then
+    DEBUG=2
+    shift
+fi
+
 if [ "x$1" = "x" ] || [ "x$1" = "x-h" ] ; then
     echo
-    echo "Usage: $0 [-h] [-v] <volume>"
+    echo "Usage: $0 [-h] [-v[v]] <volume>"
     echo
     echo " -h       : Show this help text"
     echo " -v       : Verbose mode"
+    echo " -vv      : Verbose mode that also shows password, hash and challenge-response data"
     echo
     echo " <volume> : The volume filename to be created, with or without '.img' extension"
     echo "          : volume will be created in ${IMAGEPATH}/"
@@ -67,7 +73,7 @@ if ! which udisksctl >/dev/null 2>&1 ; then
     exit 1
 fi
 
-if ! which cryptsetup >/dev/null 2>&1 ; then
+if [ ! -x /sbin/cryptsetup ] ; then
     echo "This script needs 'cryptsetup' command (Debian package: cryptsetup-bin), exiting."
     exit 1
 fi
@@ -459,6 +465,7 @@ case $R in
 			exit 1
 		    fi
 		fi
+		[ $DEBUG -gt 1 ] && echo -e "\nPassword: $PW1"
 		;;
 	    *)
 		AUTOGEN=1
@@ -625,9 +632,9 @@ case $R in
 	    fi
 	fi
 
-	[ $DEBUG -gt 0 ] && echo -e "\nChallenge passphrase: $pph1"
+	[ $DEBUG -gt 1 ] && echo -e "\nChallenge passphrase: $pph1"
 	[ $HASH -gt 0 ] && pph1=$(printf %s "$pph1" | sha256sum | awk '{print $1}')
-	[ $DEBUG -gt 0 ] && [ $HASH -gt 0 ] && echo "Hash: $pph1"
+	[ $DEBUG -gt 1 ] && [ $HASH -gt 0 ] && echo "Hash: $pph1"
 	echo -e "\nSending challenge to YubiKey, press button if blinking."
 	Resp="$(ykchalresp -${YKSLOT} "$pph1" || true )"
 	if [ -z "$Resp" ] ; then
@@ -636,10 +643,10 @@ case $R in
 	    cleanup_all
 	    exit 1
 	fi
-	[ $DEBUG -gt 0 ] && echo -e "\nResponse:     $Resp"
+	[ $DEBUG -gt 1 ] && echo -e "\nResponse:     $Resp"
 	if [ $CONCATENATE -gt 0 ] ; then
 	    Resp=${pph1}${Resp}
-	    [ $DEBUG -gt 0 ] && echo "Concatenated: $Resp"
+	    [ $DEBUG -gt 1 ] && echo "Concatenated: $Resp"
 	fi
 	unset pph1
 	;;
@@ -745,8 +752,7 @@ echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }'
 R=$( $SUCMD "mke2fs -t ext4 -L $label $fsdev 2>&1" ) ; RC=$?
 if [ $RC -gt 0 ] ; then
     echo -e "\nSomething went wrong with 'mke2fs':"
-    echo "Output from mke2fs (newlines stipped off):"
-    echo $R
+    echo "$R"
     echo
     [ $DEBUG -gt 0 ] &&  echo "Locking LUKS volume."
     R=$( lock_volume "${luksdev}" ) ; RC2=$?
@@ -759,7 +765,8 @@ if [ $RC -gt 0 ] ; then
     cleanup_all
     exit $RC
 fi
-echo    
+[ $DEBUG -gt 0 ] && echo -e "From mke2fs:\n$R"
+echo
 
 # Time to mount filesystem
 # Code with more error handling in luksextend.sh, luksmount.sh
