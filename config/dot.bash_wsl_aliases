@@ -1,0 +1,45 @@
+# -*- mode: sh -*-
+
+## Wrapper function to handle attach of connected and shared YubiKey with USBIPD in WSL
+## This should be included in the function check_wsl_usbipd() in lib/luks-functions
+
+# Unset/remove function first if sourcing a second time
+unset -f luksmount
+if myluksmountpath=$( which 2>/dev/null luksmount ) ; then
+    luksmount () {
+	local params="$@"
+	if ! usbccid=$( usbipd.exe list | tr -d '\015' | sed -n "\|^Connected:|,/^$/p" | grep "Microsoft Usbccid Smartcard Reader (WUDF)" ) ; then
+	    echo "No supported YubiKeys found, continuing without YubiKey."
+	    echo
+	    ${myluksmountpath} $@
+	else
+	    if [ "$( echo "$usbccid" | grep "Attached" | wc -l )" -eq 1 ]; then
+		${myluksmountpath} $@
+		return $?
+	    elif shared=$( echo "$usbccid" | grep -v "Not shared" | grep "Shared" ) ; then
+		if [ "$( echo "$shared" | wc -l )" -ne 1 ] ; then
+		    echo "Found YubiKey(s):"
+		    echo "$usbccid"
+		    echo -e "\nUse one of the following commands to attach preferred (available) YubiKey:\n"
+		    for busid in $( echo "$shared" | awk '{ print $1 }' ) ; do
+			echo "  usbipd.exe attach --wsl --busid ${busid}"
+		    done
+		    return 1
+		else
+		    echo "Attaching found YubiKey."
+		    usbipd.exe attach --wsl --busid $( echo "$shared" | awk '{ print $1 }' )
+		    ${myluksmountpath} $@
+		    return $?
+		fi
+	    else
+		echo "Found YubiKey(s):"
+		echo "$usbccid"
+		echo -e "\nUse one of the following command(s) to use PowerShell with local-admin rights to bind/share the YubiKey:\n"
+		for busid in $( echo "$usbccid" | awk '{ print $1 }' ) ; do
+		    echo "  powershell.exe Start-Process -Verb runAs -FilePath \"usbipd.exe\" -ArgumentList \"bind\", \"--busid\", \"${busid}\""
+		done
+		return 1
+	    fi
+	fi
+    }
+fi
