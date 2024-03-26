@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 1.2 Copyright (c) Magnus (Mem) Sandberg 2020,2022
+# Version 1.2.1 Copyright (c) Magnus (Mem) Sandberg 2020,2022,2024
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2020-03-14
@@ -418,7 +418,7 @@ fi
 
 unlock_volume R $luksdev ; RC=$?
 if [ $RC -gt 0 ] ; then
-    echo "$R"
+    echo -e "$R"
     if [ $PHYSDEV -eq 0 ] && [ $loop_before -eq 0 ] ; then
 	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
 	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
