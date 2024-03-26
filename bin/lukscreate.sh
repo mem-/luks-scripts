@@ -1,7 +1,7 @@
 #!/bin/bash
 # bash is needed to use 'read' command that has silent mode to not echo passphrase
 #
-# Version 2.3.1 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022
+# Version 2.4 Copyright (c) Magnus (Mem) Sandberg 2019-2020,2022,2024
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2019-05-29
@@ -14,10 +14,13 @@
 # Depends on the following Debian packages: cryptsetup-bin, udisks2, yubikey-personalization (need when using YubiKey)
 # Recommended Debian packages:              a2ps, wipe
 #
+# On WSL, this script also needs 'iconv' command (Debian package: libc-bin) to handle text output from PowerShell commands.
+#
+
 # Required luks-functions version
 REQ_LUKS_FUNCTIONS_MAJOR="1"
-REQ_LUKS_FUNCTIONS_MINOR="6"
-#
+REQ_LUKS_FUNCTIONS_MINOR="7"
+
 # Default settings, change by edit $HOME/.config/luks-mgmt.conf
 CONCATENATE=0
 HASH=0
@@ -160,7 +163,6 @@ cleanup_all () {
     cleanup_tmp
 }
 
-
 # Validate volume (file) name
 R=$( valid_volume "$1" ) ; RC=$?
 if echo "$R" | grep "^/dev/" >/dev/null ; then
@@ -296,6 +298,50 @@ if [ $PHYSDEV -eq 0 ] ; then
 	blocks="$R"
 	[ $DEBUG -gt 0 ] && echo "Block size for dd: $BS"
 	[ $DEBUG -gt 0 ] && echo "Number of blocks to create: ${blocks}"
+
+	if uname -r | grep -q "WSL" && [ "x$(df -hT "$IMAGEPATH" | tail -1 | awk '{ print $2 }')" == "x9p" ] ; then
+	    echo "Found WSL system, with 9p filesystem where image file will be created."
+
+	    if ! which iconv >/dev/null 2>&1 ; then
+		echo "This script needs 'iconv' command (Debian package: libc-bin), exiting."
+		cleanup_tmp
+		exit 1
+	    fi
+
+	    [ $DEBUG -gt 0 ] && echo "Get the current CodePage inside PowerShell."
+	    codepage=$( powershell.exe "[Console]::OutputEncoding.CodePage" | tr -d '\015' ) ; RC=$? # Removes CR at end of string
+	    [ $DEBUG -gt 0 ] && echo "Found CodePage number: ${codepage}, will check if iconv support it."
+	    if ! iconv -l | sed 's|//$||' | grep "^CP${codepage}\$" >/dev/null ; then
+		echo "No support of 'CP${codepage}' in iconv."
+		cleanup_tmp
+		exit 1
+	    fi
+
+	    touch ${IMAGEPATH}/${volume}.img
+	    [ $DEBUG -gt 0 ] && echo "Try to set sparse flag on new image file."
+	    R=$( cd ${IMAGEPATH}/ ; fsutil.exe sparse setflag ${volume}.img | tr -d '\015' ) ; RC=$?
+	    if echo "$R" | grep "^Error" >/dev/null ; then
+		echo "FSUTIL.EXE sparse setflag, $R" | iconv -f "CP${codepage}"
+		[ $DEBUG -gt 0 ] && echo "Removing ${IMAGEPATH}/${volume}.img"
+		cleanup_all
+		exit 1
+	    fi
+	    [ $DEBUG -gt 0 ] && echo "Checking if sparse flag was set new image file."
+	    R=$( cd ${IMAGEPATH}/ ; fsutil.exe sparse queryflag ${volume}.img | tr -d '\015' ) ; RC=$?
+	    if echo "$R" | grep "^Error" >/dev/null ; then
+		echo "FSUTIL.EXE sparse setflag, $R" | iconv -f "CP${codepage}"
+		cleanup_all
+		exit 1
+	    elif echo "$R" | grep "is NOT" >/dev/null ; then
+		echo "Could not set sparse flag on image file, the file will be full size."
+	    elif echo "$R" | grep "is set as sparse" >/dev/null ; then
+		[ $DEBUG -gt 0 ] && echo "Sparse flag is set on new image file." || true
+	    else
+		echo "Unknown output from FSUTIL.EXE: $R" | iconv -f "CP${codepage}"
+		cleanup_ll
+		exit 1
+	    fi
+	fi
 
 	if [ $DEBUG -gt 0 ] ; then
 	    dd if=/dev/zero of=${IMAGEPATH}/${volume}.img bs=$BS count=0 seek=$blocks
@@ -574,6 +620,22 @@ case $R in
 	    unset PW1
 	    cleanup_all
 	    exit 1
+	fi
+
+	# Check i WSL is setup correct with USBIPD and that we have attached an YubiKey
+	if uname -r | grep -q "WSL" ; then
+	    resp=""
+	    check_wsl_usbipd resp ; RC=$?
+	    if [ $RC -gt 0 ]; then
+		echo -e "${resp}"
+		unset PW1
+		if [ $PHYSDEV -eq 0 ] ; then
+		    [ $DEBUG -gt 0 ] && echo "Removing ${IMAGEPATH}/${volume}.img"
+		    rm ${IMAGEPATH}/${volume}.img
+		fi
+		cleanup_tmp
+		exit $RC
+	    fi
 	fi
 
 	# Similar code exists in luks-functions, in do_yubikey()
