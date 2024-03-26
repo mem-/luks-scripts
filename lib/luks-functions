@@ -1,12 +1,12 @@
 # -*- mode: sh -*-
-# Version 1.2 Copyright (c) Magnus (Mem) Sandberg 2020,2022
+# Version 1.3 Copyright (c) Magnus (Mem) Sandberg 2020,2022,2024
 # Email: mem (a) datakon , se
 #
 # Created by Mem, 2020-05-06
 
 # Version control of this file
 LUKS_FUNCTIONS_MAJOR="1"
-LUKS_FUNCTIONS_MINOR="6"
+LUKS_FUNCTIONS_MINOR="7"
 
 if ! which udisksctl >/dev/null 2>&1 ; then
     echo "This script needs 'udisksctl' command (Debian package: udisks2), exiting."
@@ -396,7 +396,7 @@ unlock_volume () {
     # Return codes:
     #  5: YubiKey commands missing
     #  4: Missing udev rule for YubiKeys
-    #  3: YubiKey missing
+    #  3: YubiKey missing, if WSL check USBIPD
     #  2: YubiKey slot not configured
     #  1: Error from YubiKey command
     #  - or -
@@ -414,7 +414,7 @@ unlock_volume () {
     if [ $RC -gt 0 ] ; then
 	do_yubikey uvresp ; RC=$?
 	if [ $RC -eq 5 ]; then
-	    echo "${uvresp}"
+	    echo -e "${uvresp}"
 	    read -p "Continue without YubiKey (y/N): " Ru
 	    case $Ru in
 		y|Y|[yY][eE][sS])
@@ -433,13 +433,13 @@ unlock_volume () {
 		    ;;
 	    esac
 	elif [ $RC -eq 2 ] || [ $RC -eq 3 ]; then
-	    echo "${uvresp}"
+	    echo -e "${uvresp}"
 	    echo "No configured YubiKey (slot ${YKSLOT}) found."
 	    read -p "Continue without YubiKey (y/N): " Ru
 	    case $Ru in
 		y|Y|[yY][eE][sS])
 		    echo
-		    echo "No configured YubiKey (slot ${YKSLOT}) found, will use static passphrase."
+		    echo "Will use static passphrase."
 		    capture_outputs Ru Eu udisksctl unlock -b $luksdev ; RC=$?
 		    if [ $RC -gt 0 ] ; then
 			printf -v "$uvreturnvar" '%s' "Could not unlock volume, maybe wrong passphrase."
@@ -462,6 +462,15 @@ unlock_volume () {
 			return $RC
 		    fi
 		    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
+		    if uname -r | grep -q "WSL" ; then
+			if usbccid=$( usbipd.exe list | tr -d '\015' | sed -n "\|^Connected:|,/^$/p" | grep "Microsoft Usbccid Smartcard Reader (WUDF)" | grep "Attached" ) ; then
+			    echo -e "\nUse one of the following command(s) to detach YubiKey:\n"
+			    for busid in $( echo "$usbccid" | awk '{ print $1 }' ) ; do
+				echo "  usbipd.exe detach --busid ${busid}"
+			    done
+			    echo
+			fi
+		    fi
 		    ;;
 	    esac
 	elif [ $RC -eq 1 ] || [ $RC -eq 4 ]; then
@@ -477,6 +486,15 @@ unlock_volume () {
 		return $RC
 	    fi
 	    fsdev=$( echo $Ru | sed -e 's/.* as //' | sed -e 's/\.$//' )
+	    if uname -r | grep -q "WSL" ; then
+		if usbccid=$( usbipd.exe list | tr -d '\015' | sed -n "\|^Connected:|,/^$/p" | grep "Microsoft Usbccid Smartcard Reader (WUDF)" | grep "Attached" ) ; then
+		    echo -e "\nUse one of the following command(s) to detach YubiKey:\n"
+		    for busid in $( echo "$usbccid" | awk '{ print $1 }' ) ; do
+			echo "  usbipd.exe detach --busid ${busid}"
+		    done
+		    echo
+		fi
+	    fi
 	fi
     else
 	fsdev="$Ru"
@@ -595,6 +613,62 @@ capture_outputs () {
     return $t_ret
 }
 
+# Used by lukscreate.sh, do_yubikey()
+check_wsl_usbipd () {
+    local cwureturnvar="$1"
+
+    # See https://askubuntu.com/questions/857012/exec-command-with-file-descriptor
+    exec 6<&0         # Save stdin as file descriptor #6
+    exec < /dev/null  # Replace original stdin with /dev/null
+
+    [ $DEBUG -gt 0 ] && echo "Found WSL system, checking that USBIPD has attached the YubiKey."
+    if ! usbipd.exe >/dev/null 2>&1 ; then
+	printf -v "$cwureturnvar" '%s' "This script needs USBIPD-WIN installed, see\nhttps://learn.microsoft.com/en-us/windows/wsl/connect-usb#install-the-usbipd-win-project"
+	# Restore stdin from fd #6 and close fd #6
+	exec 0<&6 6<&-
+	return 5
+    fi
+    # Are the client tools needed or just handy to have?
+    #if ! -x /usr/sbin/usbip >/dev/null 2>&1 ; then
+    #    printf -v "$cwureturnvar" '%s' "This script needs 'usbip' (/usr/sbin/usbip) command, etc (Debian packages: hwdata, usbip, usbutils)."
+    #    # Restore stdin from fd #6 and close fd #6
+    #    exec 0<&6 6<&-
+    #    return 5
+    #fi
+    local usbccid="" ; local attached="" ; local shared="" ; local busid=""
+    if usbccid=$( usbipd.exe list | tr -d '\015' | sed -n "\|^Connected:|,/^$/p" | grep "Microsoft Usbccid Smartcard Reader (WUDF)" ) ; then
+	[ $DEBUG -gt 0 ] && echo "Found YubiKey(s):"
+	[ $DEBUG -gt 0 ] && echo "$usbccid"
+	if attached=$( echo "$usbccid" | grep "Attached" ) ; then
+	    [ $DEBUG -gt 0 ] && echo "Found attached YubiKey(s), continuing."
+	    # Restore stdin from fd #6 and close fd #6
+	    exec 0<&6 6<&-
+	    return 0
+	fi
+
+	if shared=$( echo "$usbccid" | grep -v "Not shared" | grep "Shared" ) ; then
+	    echo -e "\nUse one of the following command(s) to attach preferred (available) YubiKey:\n"
+	    for busid in $( echo "$shared" | awk '{ print $1 }' ) ; do
+		echo "  usbipd.exe attach --wsl --busid ${busid}"
+	    done
+	else
+	    echo -e "\nUse one of the following command(s) to use PowerShell as local-admin to bind/share the YubiKey:\n"
+	    for busid in $( echo "$usbccid" | awk '{ print $1 }' ) ; do
+		echo "  powershell.exe Start-Process -Verb runAs -FilePath \"usbipd.exe\" -ArgumentList \"bind\", \"--busid\", \"${busid}\""
+	    done
+	fi
+	printf -v "$cwureturnvar" '%s' ""
+	# Restore stdin from fd #6 and close fd #6
+	exec 0<&6 6<&-
+	return 3
+    else
+	printf -v "$cwureturnvar" '%s' "Found WSL system, but no supported YubiKeys found.\nPlease use USBIPD to attached YubiKey."
+	# Restore stdin from fd #6 and close fd #6
+	exec 0<&6 6<&-
+	return 3
+    fi
+}
+
 # Used by unlock_volume()
 do_yubikey () {
     # Handle challange-response for YubiKey
@@ -602,20 +676,29 @@ do_yubikey () {
     # Return codes:
     #  5: YubiKey commands missing
     #  4: Missing udev rule for YubiKeys
-    #  3: YubiKey missing
+    #  3: YubiKey missing, if WSL YubiKey may not attached
     #  2: YubiKey slot not configured
     #  1: Error from YubiKey command
     #  0: response stored in return variable
     #
     # Return string:
     # challenge-response string or error message
-    local Ry="" ; local Ey="" ; local RC=""
+    local Ry="" ; local Ey="" ; local ykresp="" ; local RC=""
     local pph=""
-    local returnvar="$1"
+    local ykreturnvar="$1"
 
     if ! which ykinfo >/dev/null 2>&1 ; then
-	printf -v "$returnvar" '%s' "This script needs 'ykinfo' and 'ykchalresp' commands (Debian package: yubikey-personalization)."
+	printf -v "$ykreturnvar" '%s' "This script needs 'ykinfo' and 'ykchalresp' commands (Debian package: yubikey-personalization)."
 	return 5
+    fi
+
+    # Check i WSL is setup correct with USBIPD and that we have attached an YubiKey
+    if uname -r | grep -q "WSL" ; then
+	check_wsl_usbipd ykresp ; RC=$?
+	if [ $RC -gt 0 ]; then
+	    printf -v "$ykreturnvar" '%s' "${ykresp}"
+	    return $RC
+	fi
     fi
 
     # Similar code exists in lukscreate.sh
@@ -629,23 +712,23 @@ do_yubikey () {
 	capture_outputs Ry Ey ykchalresp -${YKSLOT} "$pph" ; RC=$?
 	if [ $RC -gt 0 ] ; then
 	    unset pph ; unset Ry
-	    printf -v "$returnvar" '%s' "Maybe missing or wrong config (slot ${YKSLOT}): ${Ey}."
+	    printf -v "$ykreturnvar" '%s' "Maybe missing or wrong config (slot ${YKSLOT}): ${Ey}."
 	    return 1
 	fi
 	[ $CONCATENATE -gt 0 ] ; Ry=$pph$Ry
 	# about dynamic/pointer variables, including "Risks" section
 	# see https://stackoverflow.com/questions/16553089/dynamic-variable-names-in-bash
-	printf -v "$returnvar" '%s' "${Ry}"
+	printf -v "$ykreturnvar" '%s' "${Ry}"
 	unset pph ; unset Ry
 	return 0
     elif [ $RC -eq 0 ] && [ $Ry -eq 0 ]; then
-	printf -v "$returnvar" '%s' "YubiKey found but slot ${YKSLOT} not configured."
+	printf -v "$ykreturnvar" '%s' "YubiKey found but slot ${YKSLOT} not configured."
 	return 2
     elif [ "x${Ey}" == "xUSB error: Access denied (insufficient permissions)" ]; then
-	printf -v "$returnvar" '%s\n%s' "${Ey}." "Create an udev role for yubikey."
+	printf -v "$ykreturnvar" '%s\n%s' "${Ey}." "Create an udev rule for yubikey."
 	return 4
     else
-	printf -v "$returnvar" '%s' "${Ey}."
+	printf -v "$ykreturnvar" '%s' "${Ey}."
 	return 3
     fi
 }
