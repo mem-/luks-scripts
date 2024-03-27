@@ -1,7 +1,3 @@
-#
-# Add the following to your ~/.bash_completion
-#
-
 # My LUKS image helper
 # main idea from https://iridakos.com/tutorials/2018/03/01/bash-programmable-completion-tutorial.html
 # addition from https://unix.stackexchange.com/questions/1800/how-to-specify-a-custom-autocomplete-for-specific-commands
@@ -9,7 +5,7 @@ _luksmount () {
     IMAGEPATH="$HOME/.images"
     CONFIG=$HOME/.config/luks-mgmt.conf
     [ -f $CONFIG ] && . $CONFIG
-    LOOPDEVS=$( ls -1 $IMAGEPATH/ | grep img | sed -e 's/\.img$//' )
+    LOOPDEVS=$( ls -1 --file-type $IMAGEPATH/ | grep img | sed -e 's/\.img$//' )
     PHYSDEVS=$( lsblk -o NAME,FSTYPE -i | grep -A1 crypto_LUKS | sed -e 's/^|[- ]//' | awk '{ print $1 " " $2 }' | sed -z -e 's/LUKS\n`-/LUKS @@/g' | sed -e 's/^`-//' | grep "LUKS" | grep -v '@@' | awk '{ print "/dev/" $1 }' )
 
     COMPREPLY=($(compgen -W "$( echo "$LOOPDEVS $PHYSDEVS" )" "${COMP_WORDS[COMP_CWORD]}"))
