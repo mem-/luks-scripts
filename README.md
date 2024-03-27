@@ -46,6 +46,11 @@ Recommended Debian packages:
 - coreutils (shred) or wipe (to remove files with password after print out)
 - xclip (to copy mount path to clipboard)
 
+On WSL systems, lukscreate.sh also needs 'iconv' command (Debian package: libc-bin)
+to handle text output from PowerShell commands.
+luks-functions also may use 'usbip' (/usr/sbin/usbip) command, etc
+(Recommended Debian packages: hwdata, usbip, usbutils).
+
 ## Manual installation
 The path `/usr/share/bash-completion/completions/` may be different for
 other distros than Debian.

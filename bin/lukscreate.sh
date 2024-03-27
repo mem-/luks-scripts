@@ -139,10 +139,20 @@ else
     rmcmd="rm"
 fi
 
+read moremajor moreminor morefixes <<<$( more -V | tr -d 'a-zA-Z-' | tr '.' ' ' )
+if [ $moremajor -gt 2 ] ; then
+    morecmd="more -e"
+elif [ $moremajor -eq 2 ] && [ $moreminor -ge 38 ] ; then
+    morecmd="more -e"
+else
+    morecmd="more"
+fi
+[ $DEBUG -gt 0 ] && echo "Will use '${morecmd}' for info text."
+
 cleanup_tmp () {
     if [ -e $tempdir ] ; then
 	echo "Cleaning up $tempdir"
-	[ $DEBUG -gt 0 ] && echo "Using '${rmcmd}' to remove files"
+	[ $DEBUG -gt 0 ] && echo "Using '${rmcmd}' to remove files."
 	$rmcmd 2>/dev/null $tempdir/*.txt
 	rmdir $tempdir
     fi
@@ -213,7 +223,7 @@ case $R in
 esac
 
 # Use more to have paging only if needed
-more <<'_EOT'
+${morecmd} <<'_EOT'
 
 This script can help you create a static password for your LUKS volume
 and/or a passphrase used together with YubiKey Challenge-Response.
@@ -733,10 +743,9 @@ fi
 
 echo -e "\nCreating LUKS volume."
 if [ $STATICPW -gt 0 ] ; then
-    echo "$PW1" > $tempdir/args.txt
     echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-    # The first arg to 'printf' should be without '\n' otherwise the password will include NEWLINE
-    $SUCMD "printf '%s' \"$( cat $tempdir/args.txt )\" | cryptsetup --label $lukslabel --key-file - luksFormat $luksdev" ; RC=$?
+    # The following works from 2.1.0, and maybe earlier versions too
+    $SUCMD "cryptsetup -q --label $lukslabel --key-file <( echo -n "$PW1" ) luksFormat $luksdev" ; RC=$?
     [ $RC -eq 1 ] && echo -n "Something went wrong, did you miss to write 'yes' in uppercase?"
     if [ $RC -gt 0 ] ; then
 	echo -e "\nCould not create LUKS volume, exiting."
@@ -751,19 +760,16 @@ if [ $STATICPW -gt 0 ] ; then
     fi
     if [ $CHALRESP -gt 0 ] ; then
 	echo -e "\nAdding Challenge-Response to LUKS volume."
-	#echo "$Resp" >> $tempdir/args.txt
-	#echo "$Resp" >> $tempdir/args.txt
 	if [ ! -z $SLOT ] && [ $SLOT -gt 0 ] ; then
 	    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-	    #$SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup --key-slot=$SLOT luksAddKey $luksdev" ; RC=$?
-	    # The following should work from 2.1.0, works at least with 2.6.1
+	    # The following works from 2.1.0, and maybe earlier versions too
 	    $SUCMD "cryptsetup --key-slot=$SLOT --key-file <( echo -n "$PW1" ) luksAddKey $luksdev <( echo -n "$Resp" )" ; RC=$?
 	else
 	    echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-	    #$SUCMD "printf '%s\n' \"$( cat $tempdir/args.txt )\" | cryptsetup luksAddKey $luksdev" ; RC=$?
-	    # The following should work from 2.1.0, works at least with 2.6.1
+	    # The following works from 2.1.0, and maybe earlier versions too
 	    $SUCMD "cryptsetup --key-file <( echo -n "$PW1" ) luksAddKey $luksdev <( echo -n "$Resp" )" ; RC=$?
 	fi
+	[ $RC -gt 0 ] && echo "Something went wrong when adding YubiKey challenge-response to LUKS volume"
     fi
     # Not using 'unlock_volume()' in luks-functions as we know the password
     [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
@@ -771,21 +777,10 @@ if [ $STATICPW -gt 0 ] ; then
     sleep 2s
     R=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$PW1" ) 2>&1 ) ; RC=$?
     unset PW1 ; unset Resp
-    if [ $RC -gt 0 ] ; then
-	echo "Unlock failed: $R"
-	if [ $PHYSDEV -eq 0 ] ; then
-	    [ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
-	    R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
-	    [ $RC2 -gt 0 ] && echo "$R"
-	fi
-	cleanup_all
-	exit $RC
-    fi
 else
-    echo "$Resp" > $tempdir/args.txt
     echo "If asked, enter relevant password for '$( echo $SUCMD | awk '{ print $1 }' )' command."
-    # The first arg to 'printf' should be without '\n' otherwise the password will include NEWLINE
-    $SUCMD "printf '%s' \"$( cat $tempdir/args.txt )\" | cryptsetup --label $lukslabel --key-file - luksFormat $luksdev" ; RC=$?
+    # The following works from 2.1.0, and maybe earlier versions too
+    $SUCMD "cryptsetup -q --label $lukslabel --key-file <( echo -n "$Resp" luksFormat $luksdev" ; RC=$?
     [ $RC -eq 1 ] && echo -n "Something went wrong, did you miss to write 'yes' in uppercase?"
     if [ $RC -gt 0 ] ; then
 	echo -e "\nCould not create LUKS volume, exiting."
@@ -800,11 +795,22 @@ else
     fi
     # Not using 'unlock_volume()' in luks-functions as we know the Challenge-Response
     [ $DEBUG -gt 0 ] && echo -e "\nUnlocking LUKS volume."
+    [ $DEBUG -gt 0 ] && echo "Sleeping 2 seconds to allow the device to settle."
+    sleep 2s
     R=$( udisksctl unlock -b $luksdev --key-file <( echo -n "$Resp" ) 2>&1 ) ; RC=$?
     unset Resp
 fi
-$rmcmd $tempdir/args.txt
-[ $RC -gt 0 ] && exit $RC   # unlock failed...
+if [ $RC -gt 0 ] ; then
+    echo "Unlock failed: $R"
+    if [ $PHYSDEV -eq 0 ] ; then
+	[ $DEBUG -gt 0 ] && echo "Tear down of loop device ${loopdev}"
+	R=$( teardown_loopdevice "$loopdev" ) ; RC2=$?
+	[ $RC2 -gt 0 ] && echo "$R"
+    fi
+    cleanup_all
+    exit $RC
+fi
+
 fsdev=$( echo $R | sed -e 's/.* as //' | sed -e 's/\.$//' )
 [ $DEBUG -gt 0 ] && echo "Filesystem dev: ${fsdev}"
 echo
