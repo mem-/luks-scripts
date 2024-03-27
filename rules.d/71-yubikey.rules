@@ -1,8 +1,16 @@
 # this udev file should be used with udev version 188 and newer
+
+### For more info see https://support.yubico.com/hc/en-us/articles/360013708900-Using-Your-YubiKey-with-Linux
+### and https://github.com/Yubico/libfido2/blob/main/udev/70-u2f.rules
+
 ACTION!="add|change", GOTO="yubikey_end"
 
-# Yubico YubiKey
-# idProduct = 0010 is for the realy old YubiKeys
-SUBSYSTEM=="usb", ATTRS{idVendor}=="1050", ATTRS{idProduct}=="0010|0113|0114|0115|0116|0120|0200|0402|0403|0406|0407|0410", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+# idProduct = 0010 is for the really old YubiKeys
+
+### Newer, more exact matching
+#KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1050", ATTRS{idProduct}=="0010|0113|0114|0115|0116|0120|0402|0403|0406|0407|0410", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+
+### Older, search matching
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1050", ATTRS{idProduct}=="0010|0113|0114|0115|0116|0120|0200|0402|0403|0406|0407|0410", TAG+="uaccess", MODE="0660", GROUP="plugdev"
 
 LABEL="yubikey_end"
