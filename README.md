@@ -4,7 +4,7 @@ This repo contains a number of (bash) scripts that create, mount, unmount
 and extend LUKS image files or USB disks, etc, that has an encrypted
 ext4 filesystem.
 
-The scripts was (2019-2022) developed on Debian GNU/Linux systems.
+The scripts was developed (2019-2024) on Debian GNU/Linux systems.
 
 ## Background
 
@@ -51,6 +51,8 @@ to handle text output from PowerShell commands.
 luks-functions also may use 'usbip' (/usr/sbin/usbip) command, etc
 (Recommended Debian packages: hwdata, usbip, usbutils).
 
+For more information about WSL systems, see WSL.md
+
 ## Manual installation
 The path `/usr/share/bash-completion/completions/` may be different for
 other distros than Debian.
@@ -77,7 +79,14 @@ sudo cp -p rules-d/10-udisks2-luks-mgmt.rules /etc/polkit-1/rules.d/
 sudo chown root:root /etc/polkit-1/rules.d/10-udisks2-luks-mgmt.rules
 sudo systemctl restart polkit.service
 
+sudo -s /bin/bash -c 'usermod -a -G plugdev ${SUDO_USER}'
+
 cp -pi config/luks-mgmt.conf $HOME/.config/
+```
+- Edit $HOME/.config/luks-mgmt.conf to match you settings
+
+```bash
+. $HOME/.config/luks-mgmt.conf ; mkdir ${IMAGEPATH}
 ```
 
 ## Webpages about resizing LUKS volumes
