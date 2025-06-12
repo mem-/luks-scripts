@@ -10,11 +10,11 @@ The scripts was developed (2019-2024) on Debian GNU/Linux systems.
 
 When using a fully encrypted harddisk on a loptop or other computer,
 it only protects your sensitive data when the computer is powered off.
-Hybernate may be okey, but `suspend to RAM` probably still has your
+Hybernate may be okay, but `suspend to RAM` probably still has your
 harddrive's encryption key in RAM.
 
 Sensitive data, like salary reports, git repos, etc, that you rarely look
-at or don't use while at a conferenc or reading emails at a cafe, can
+at or don't use while at a conference or when reading emails at a cafe, can
 be stored in a LUKS-encrypted image file and only unlocked when needed.
 
 To further increase security, these scripts support the use of a YubiKey
@@ -22,8 +22,8 @@ configured with challenge-response.
 
 ### Weaknesses
 
-If your computer is compromised or f onther users has root access to the
-computer, it is easy to modofy the scripts to copy encryption key(s) used
+If your computer is compromised or if onther users has root access to the
+computer, it is easy to modify the scripts to copy encryption key(s) used
 to unlock the LUKS container(s). The way to protect against this should be
 to implement some kind of OTP for LUKS.
 
@@ -44,7 +44,8 @@ On Debian systems, the following packages are required:
 Recommended Debian packages:
 - a2ps (print out static password during creation of LUKS volume)
 - coreutils (shred) or wipe (to remove files with password after print out)
-- xclip (to copy mount path to clipboard)
+- xclip or wl-clipboard (to copy mount path to clipboard)
+  (support for wl-clipboard is not implementetd yet)
 
 On WSL systems, lukscreate.sh also needs 'iconv' command (Debian package: libc-bin)
 to handle text output from PowerShell commands.
@@ -70,12 +71,15 @@ sudo cp -p config/dot.bash_completion /usr/share/bash-completion/completions/luk
 sudo ln -s luksmount /usr/share/bash-completion/completions/luksextend
 sudo ln -s luksmount /usr/share/bash-completion/completions/luksunmount
 
-sudo cp -pi rules-d/71-yubikey.rules /etc/udev/rules.d/
+sudo cp -pi rules.d/71-yubikey.rules /etc/udev/rules.d/
 sudo chown root:root /etc/udev/rules.d/71-yubikey.rules
 # Older versions of udevadm only has a '--reload' option
 sudo udevadm control --reload-rules ; sudo udevadm trigger
 
-sudo cp -p rules-d/10-udisks2-luks-mgmt.rules /etc/polkit-1/rules.d/
+# On some systems /etc/polkit-1/rules.d/ is missing
+sudo mkdir /etc/polkit-1/rules.d
+# On all systems, continue here
+sudo cp -p rules.d/10-udisks2-luks-mgmt.rules /etc/polkit-1/rules.d/
 sudo chown root:root /etc/polkit-1/rules.d/10-udisks2-luks-mgmt.rules
 sudo systemctl restart polkit.service
 
