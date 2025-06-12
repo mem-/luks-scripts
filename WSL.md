@@ -47,7 +47,7 @@ But the 'wsl' command in PowerShell can be used to access non windows disks.
   - Inside WSL, use PowerShell.exe for commands that need Local-Admin rights, or other PowerShell modules
 
 ```bash
-# 'set -f' inside parentheses to temporary disable bash globbing
+# 'set -f' inside parentheses command to temporary disable bash globbing
 ( set -f ; powershell.exe GET-CimInstance -query \"SELECT * from Win32_DiskDrive\" )
 
 # Attach a raw (bare) block-device disk inside WSL
@@ -58,7 +58,7 @@ powershell.exe Start-Process -Verb runAs -FilePath \"wsl.exe\" -ArgumentList \"-
 wsl.exe --unmount \\\\.\\PHYSICALDRIVEx
 ```
 
-### Recompile WSL Linux kernel
+### Optional: Recompile WSL Linux kernel
 
   The following web pages gives some guidelines of how to compile your own WSL kernel:
 
