@@ -21,11 +21,13 @@ This is an unprioritized list of ideas with improvements.
 
  - luksmount.sh without parameters should list mountpoint for mounted volumes
 
- - add option to mount filesystem read-only
+ - Add option to mount filesystem read-only
+
+ - Add support for wl-clipboard on Wayland systems
 
 ## bin/luksextend.sh
 
- - should deny extending filesystem mounted in read-only mode
+ - Should deny extending filesystem mounted in read-only mode
 
 ## bin/luksmount.sh, bin/luksunmount.sh
 
