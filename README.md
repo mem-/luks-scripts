@@ -86,6 +86,12 @@ sudo systemctl restart polkit.service
 sudo -s /bin/bash -c 'usermod -a -G plugdev ${SUDO_USER}'
 
 cp -pi config/luks-mgmt.conf $HOME/.config/
+
+# On newer WSL systems, spring 2025, probably with Linux kernel 6.x,
+# make sure that vhci-hcd module is loaded for USBIP to work.
+# We need to use 'sudo -i /bin/sh -c' to handle the output redirect
+sudo -i /bin/sh -c "echo \"# Added by $(whoami), $(date +%F)\nvhci-hcd\" > /etc/modules-load.d/usbip.conf"
+sudo modprobe vhci-hcd
 ```
 - Edit $HOME/.config/luks-mgmt.conf to match you settings
 
